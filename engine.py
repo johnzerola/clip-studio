@@ -185,21 +185,22 @@ def stamp(seconds):
     return f"{ticks // 360000}:{ticks // 6000 % 60:02}:{ticks // 100 % 60:02}.{ticks % 100:02}"
 
 
-def transcribe(source, start, end, folder):
-    audio = folder / "speech.wav"
-    command(FF + ["-y", "-ss", str(start), "-i", str(source), "-t", str(end - start),
-                  "-vn", "-ac", "1", "-ar", "16000", str(audio)])
-    try:
-        with MODEL_LOCK:
-            from faster_whisper import WhisperModel
-            if "base" not in MODELS:
-                MODELS["base"] = WhisperModel("base", device="cpu", compute_type="int8",
-                                              download_root=str(Path(__file__).parent / "models"))
-            segments, _ = MODELS["base"].transcribe(str(audio), word_timestamps=True, vad_filter=True)
-            return [(start + w.start, start + w.end, w.word.strip())
-                    for s in segments for w in (s.words or []) if w.word.strip()]
-    finally:
-        audio.unlink(missing_ok=True)
+def transcribe(source, start, end):
+    import numpy as np
+    from faster_whisper import WhisperModel
+
+    pcm = command(FF + ["-ss", str(start), "-i", str(source), "-t", str(end - start),
+                        "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "pipe:1"])
+    if not pcm:
+        return []
+    samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
+    with MODEL_LOCK:
+        if "base" not in MODELS:
+            MODELS["base"] = WhisperModel("base", device="cpu", compute_type="int8",
+                                          download_root=str(Path(__file__).parent / "models"))
+        segments, _ = MODELS["base"].transcribe(samples, word_timestamps=True, vad_filter=True)
+        return [(start + w.start, start + w.end, w.word.strip())
+                for s in segments for w in (s.words or []) if w.word.strip()]
 
 
 def subtitles(path, words, start, end, style):
@@ -254,7 +255,7 @@ def process(source, folder, options, log):
         scratch.mkdir()
         pieces = []
         for low, high in parts:
-            words = transcribe(source, low, high, scratch) if options.captions and audio else []
+            words = transcribe(source, low, high) if options.captions and audio else []
             for start, end, style in layouts(signals, low, high, options):
                 name = f"p{len(pieces):03}.mp4"
                 graph = layout_graph(style, options)
