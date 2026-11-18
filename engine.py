@@ -293,7 +293,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             phrase = " ".join((r"{\1c&H00DEFF&}" if k == j else r"{\1c&HFFFFFF&}")
                               + re.sub(r"[{}\\\r\n]", "", word)
                               for k, (_, _, word) in enumerate(group))
-            lines.append(f"Dialogue: 0,{stamp(a-start)},{stamp(limit-start)},Caption,,0,0,0,"
+            lines.append(f"Dialogue: 0,{stamp(a-start)},{stamp(limit-start)},Caption,,0,0,0,,"
                          + r"{\pos(360," + str(y) + ")}" + phrase)
     path.write_text(head + "\n".join(lines) + "\n", encoding="utf-8")
 
