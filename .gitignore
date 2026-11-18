@@ -6,3 +6,5 @@ resultados/
 *.ts
 *.log
 .env
+preferencias.local.json
+preferencias.local.tmp

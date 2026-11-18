@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse
+from editorial import Cleanup, clean_ranges, refine_montage, silence_edits, speech_gap_edits, transcript_edits
+from facecam import estimate, gameplay_region
 
 WIDTH, HEIGHT = 720, 1280
 FF = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin"]
@@ -33,12 +35,15 @@ class Options:
     count: int
     render: bool
     manual: tuple = ()
+    cleanup: Cleanup = Cleanup()
+    auto_face: bool = False
 
 
 def command(args, **kwargs):
     result = sp.run(args, capture_output=True, **kwargs)
     if result.returncode:
-        raise RuntimeError(result.stderr.decode("utf-8", "replace").strip()[-900:] or str(args[0]))
+        message = result.stderr.decode("utf-8", "replace").strip()
+        raise RuntimeError(message[:1000] or str(args[0]))
     return result.stdout
 
 
@@ -64,31 +69,53 @@ def probe(source):
     return duration, any(s["codec_type"] == "audio" for s in data["streams"])
 
 
-def inspect(source, duration, audio):
+def detect_facecam(source, duration):
+    width, height = 640, 360
+    points = [duration * i / 13 for i in range(1, 13)]
+    frames = []
+    for point in points:
+        frame = command(FF + ["-threads", "2", "-ss", str(point), "-i", str(source),
+                              "-an", "-frames:v", "1", "-vf", f"scale={width}:{height},format=gray",
+                              "-c:v", "rawvideo", "-threads", "1", "-f", "rawvideo", "pipe:1"])
+        if len(frame) == width * height:
+            frames.append(frame)
+    return estimate(frames, width, height)
+
+
+def inspect(source, duration, audio, face=""):
     """Two-second samples. No rendering or speech model needed for this pass."""
     pcm = array.array("h")
     if audio:
         pcm.frombytes(command(FF + ["-threads", "2", "-i", str(source), "-vn", "-ac", "1",
                                     "-ar", "800", "-f", "s16le", "pipe:1"]))
+    width, height = 64, 36
+    size = width * height
     frames = command(FF + ["-threads", "2", "-filter_threads", "1", "-i", str(source),
-                          "-an", "-vf", "fps=1/2,scale=32:18,format=gray",
+                          "-an", "-vf", f"fps=1/2,scale={width}:{height},format=gray",
                           "-c:v", "rawvideo", "-threads", "1", "-f", "rawvideo", "pipe:1"])
+    face_pixels = set()
+    if face:
+        x, y, w, h = map(float, face.split(","))
+        face_pixels = {row * width + col for row in range(int(y * height), min(height, math.ceil((y + h) * height)))
+                       for col in range(int(x * width), min(width, math.ceil((x + w) * width)))}
     pairs = []
     for i in range(math.ceil(duration / 2)):
         samples = pcm[i * 1600:(i + 1) * 1600]
         rms = math.sqrt(sum(s * s for s in samples) / len(samples)) if samples else 0
-        current = frames[i * 576:(i + 1) * 576]
-        prior = frames[(i - 1) * 576:i * 576] if i else b""
-        motion = sum(abs(a - b) for a, b in zip(prior, current)) / 576
-        pairs.append((rms, motion))
+        current = frames[i * size:(i + 1) * size]
+        prior = frames[(i - 1) * size:i * size] if i else b""
+        changes = [abs(a - b) for a, b in zip(prior, current)]
+        cam_motion = sum(changes[p] for p in face_pixels) if len(changes) == size else 0
+        motion = (sum(changes) - cam_motion) / max(1, size - len(face_pixels))
+        pairs.append((rms, motion, cam_motion / max(1, len(face_pixels))))
     baselines = [max(floor, statistics.median(p[k] for p in pairs))
-                 for k, floor in enumerate((100, 2))]
-    return [(min(5, a / baselines[0]), min(5, m / baselines[1])) for a, m in pairs]
+                 for k, floor in enumerate((100, 2, 2))]
+    return [tuple(min(5, value / baseline) for value, baseline in zip(pair, baselines)) for pair in pairs]
 
 
 def score(signals, start, end):
     bins = signals[int(start // 2):math.ceil(end / 2)]
-    return round(statistics.mean(.58 * a + .42 * m for a, m in bins), 3) if bins else 0
+    return round(statistics.mean(.58 * pair[0] + .42 * pair[1] for pair in bins), 3) if bins else 0
 
 
 def plan(signals, total, options):
@@ -146,8 +173,24 @@ def layout_graph(style, options):
     def fit(region, width, height):
         return (crop(region) + f"scale={width}:{height}:force_original_aspect_ratio=decrease:"
                 f"force_divisible_by=2,setsar=1,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=0x101522")
+    def game_canvas(source, target):
+        return (f"{source}{crop(options.game)}split=2[back][play];"
+                f"[back]scale=180:320:force_original_aspect_ratio=increase:force_divisible_by=2,"
+                f"crop=180:320,gblur=sigma=12,drawbox=c=black@0.24:t=fill,"
+                f"scale={WIDTH}:{HEIGHT},setsar=1[blur];"
+                f"[play]scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=decrease:"
+                f"force_divisible_by=2,setsar=1[active];"
+                f"[blur][active]overlay=(W-w)/2:(H-h)/2{target}")
     face_fill = (crop(options.face) + f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase:"
                  f"force_divisible_by=2,crop={WIDTH}:{HEIGHT},setsar=1")
+    if style == "gamecam":
+        x = "W-w-34" if options.corner == "direito" else "34"
+        circle = ("format=yuva444p,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':"
+                  "a='if(lte((X-W/2)*(X-W/2)+(Y-H/2)*(Y-H/2),(W/2-2)*(W/2-2)),255,0)'")
+        camera = (crop(options.face) + "scale=196:196:force_original_aspect_ratio=increase:"
+                  "force_divisible_by=2,crop=196:196,setsar=1," + circle)
+        return (f"[0:v]split=2[f][g];{game_canvas('[g]', '[main]')};"
+                f"[f]{camera}[cam];[main][cam]overlay={x}:246[base]")
     if style == "split":
         return (f"[0:v]split=2[f][g];[f]{fit(options.face, WIDTH, 440)}[top];"
                 f"[g]{fit(options.game, WIDTH, 840)}[bottom];[top][bottom]vstack[base]")
@@ -156,10 +199,12 @@ def layout_graph(style, options):
         return (f"[0:v]split=2[f][g];[f]{face_fill}[main];"
                 f"[g]{fit(options.game, 272, 156)},drawbox=color=white@0.8:t=2[pip];"
                 f"[main][pip]overlay={x}:92[base]")
-    return f"[0:v]{face_fill if style == 'face' else fit(options.game, WIDTH, HEIGHT)}[base]"
+    if style == "face":
+        return f"[0:v]{face_fill}[base]"
+    return game_canvas("[0:v]", "[base]")
 
 
-def layouts(signals, start, end, options):
+def layouts(signals, start, end, options, words=()):
     if not options.face:
         return [(start, end, "game")]
     if options.style != "dynamic":
@@ -167,11 +212,21 @@ def layouts(signals, start, end, options):
     segments = []
     point = start
     while point < end - .01:
-        stop = end if end - point < 12 else point + 8
+        stop = end if end - point < 8 else point + 4
         bins = signals[int(point // 2):math.ceil(stop / 2)]
-        audio, motion = (map(statistics.mean, zip(*bins)) if bins else (0, 0))
-        style = "face" if audio >= 1.25 and audio > motion * 1.45 else (
-            "game" if motion >= 1.25 and motion > audio * 1.25 else "split")
+        activity = [statistics.mean(values) for values in zip(*bins)] if bins else []
+        audio, motion, cam = (activity + [0, 0, 0])[:3]
+        reaction = any(point <= a < stop and ("!" in text or text.casefold().strip("!?.,") in
+                       {"caramba", "nossa", "mano", "wow", "eita"}) for a, _, text in words)
+        if (cam >= 1.45 and audio >= 1.2 and motion < cam * 1.4) or (
+                reaction and audio >= 1.4 and cam >= 1.05):
+            style = "face"
+        elif motion >= 1.35 and motion > max(cam, audio) * 1.25:
+            style = "game"
+        elif motion >= 1.0 and cam < 1.15:
+            style = "gamecam"
+        else:
+            style = "split"
         if segments and segments[-1][2] == style:
             segments[-1] = (segments[-1][0], stop, style)
         else:
@@ -203,6 +258,18 @@ def transcribe(source, start, end):
                 for s in segments for w in (s.words or []) if w.word.strip()]
 
 
+def audio_silences(source, low, high, cleanup):
+    result = sp.run(["ffmpeg", "-hide_banner", "-loglevel", "info", "-nostdin",
+                     "-ss", str(low), "-i", str(source), "-t", str(high - low),
+                     "-vn", "-map", "0:a:0", "-af",
+                     f"silencedetect=noise={cleanup.noise}dB:d={cleanup.pause}",
+                     "-f", "null", "-"], capture_output=True, check=False)
+    log = result.stderr.decode("utf-8", "replace")
+    if result.returncode:
+        raise RuntimeError(f"Falha ao medir silêncio: {log[-500:]}")
+    return list(silence_edits(log, low, high, cleanup.padding))
+
+
 def subtitles(path, words, start, end, style):
     y = 495 if style == "split" else 1035
     head = """[Script Info]
@@ -231,57 +298,106 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     path.write_text(head + "\n".join(lines) + "\n", encoding="utf-8")
 
 
+def render_clip(source, destination, shots, words, options):
+    scratch = destination.with_suffix("")
+    scratch.mkdir()
+    pieces = []
+    for start, end, style in shots:
+        name = f"p{len(pieces):03}.mp4"
+        graph = layout_graph(style, options)
+        if words:
+            subtitles(scratch / "legend.ass", words, start, end, style)
+            graph += ";[base]ass=legend.ass[out]"
+        else:
+            graph += ";[base]null[out]"
+        command(FF + ["-y", "-threads", "2", "-ss", str(start), "-i", str(source),
+                      "-filter_complex_threads", "1", "-filter_complex", graph,
+                      "-map", "[out]", "-map", "0:a:0?", "-t", str(end - start),
+                      "-r", "30"] + encoder() + ENC + [name], cwd=scratch)
+        pieces.append(name)
+    listing = scratch / "join.txt"
+    listing.write_text("".join(f"file '{name}'\n" for name in pieces), encoding="ascii")
+    partial = destination.with_suffix(".partial.mp4")
+    command(FF + ["-y", "-f", "concat", "-safe", "1", "-i", listing.name,
+                  "-c", "copy", "-movflags", "+faststart", str(partial)], cwd=scratch)
+    partial.replace(destination)
+    for name in [*pieces, "join.txt", "legend.ass"]:
+        (scratch / name).unlink(missing_ok=True)
+    scratch.rmdir()
+
+
 def process(source, folder, options, log):
+    from dataclasses import replace
+
     folder.mkdir(parents=True, exist_ok=True)
     source = source.resolve()
     total, audio = probe(source)
     log(f"Analisando {source.name} ({total / 60:.1f} min)")
-    signals = inspect(source, total, audio)
+    if options.auto_face and not options.face:
+        face = detect_facecam(source, total)
+        options = replace(options, face=face)
+        log(f"Facecam: {face or 'sem rosto recorrente no canto; usando gameplay'}")
+    if options.face and not options.game:
+        options = replace(options, game=gameplay_region(options.face))
+    if options.style == "all" and not options.face:
+        options = replace(options, style="game")
+        log("Exportação sem facecam: gerando uma versão de gameplay.")
+    signals = inspect(source, total, audio, options.face)
     selected = plan(signals, total, options)
     report = {"schema": 1, "source": str(source), "duration": total, "unit": "seconds",
-              "method": "manual" if options.manual else "relative_audio_and_motion", "clips": []}
-    for parts in selected:
-        report["clips"].append({"parts": [{"start": a, "end": b, "score": score(signals, a, b)}
-                                          for a, b in parts],
-                                "layouts": [dict(start=a, end=b, style=s) for low, high in parts
-                                            for a, b, s in layouts(signals, low, high, options)]})
+              "method": "manual" if options.manual else "relative_audio_and_motion",
+              "facecam": options.face, "gameplay": options.game, "clips": []}
     report_path = folder / "cortes.json"
-    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    log(f"{len(selected)} corte(s) selecionado(s) em {folder.name}")
+    cleanup = options.cleanup
+    prepared = []
+    styles = ("dynamic", "split", "reaction") if options.style == "all" else (options.style,)
+    for index, parts in enumerate(selected, 1):
+        log(f"Preparando montagem {index}/{len(selected)}")
+        shared_words = None
+        if audio and cleanup.speech and not options.manual:
+            shared_words = transcribe(source, max(0, parts[0][0] - 3), min(total, parts[-1][1] + 3))
+            parts = refine_montage(parts, shared_words, total)
+        kept, removals, transcript = [], [], []
+        for low, high in parts:
+            words = ([w for w in shared_words if w[0] < high and w[1] > low]
+                     if shared_words is not None else [])
+            if audio and shared_words is None and (cleanup.fillers or cleanup.repeats or cleanup.speech_gaps
+                                                   or (options.render and options.captions)):
+                words = transcribe(source, low, high)
+            edits = list(transcript_edits(words, cleanup))
+            if cleanup.speech_gaps:
+                edits.extend(speech_gap_edits(words, cleanup))
+            if audio and cleanup.silence:
+                edits.extend(audio_silences(source, low, high, cleanup))
+            ranges, removed = clean_ranges(low, high, edits, words)
+            kept.extend(ranges)
+            removals.extend(removed)
+            transcript.extend(words)
+        by_style = {style: [shot for low, high in kept
+                            for shot in layouts(signals, low, high, replace(options, style=style), transcript)]
+                    for style in styles}
+        report["clips"].append({
+            "parts": [dict(start=a, end=b, score=score(signals, a, b)) for a, b in kept],
+            "removed": removals,
+            "layouts": [dict(start=a, end=b, style=s) for a, b, s in by_style[styles[0]]],
+            "variants": {key: {"layouts": [dict(start=a, end=b, style=s) for a, b, s in shots]}
+                         for key, shots in by_style.items()}
+        })
+        prepared.append((by_style, transcript if options.captions else []))
+    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    log(f"{len(prepared)} corte(s) planejado(s) em {folder.name}")
     if not options.render:
         return
-    for index, parts in enumerate(selected, 1):
-        scratch = folder / f"trechos_{index:02}"
-        scratch.mkdir()
-        pieces = []
-        for low, high in parts:
-            words = transcribe(source, low, high) if options.captions and audio else []
-            for start, end, style in layouts(signals, low, high, options):
-                name = f"p{len(pieces):03}.mp4"
-                graph = layout_graph(style, options)
-                if words:
-                    subtitles(scratch / "legend.ass", words, start, end, style)
-                    graph += ";[base]ass=legend.ass[out]"
-                else:
-                    graph += ";[base]null[out]"
-                command(FF + ["-y", "-threads", "2", "-ss", str(start), "-i", str(source),
-                              "-filter_complex_threads", "1", "-filter_complex", graph,
-                              "-map", "[out]", "-map", "0:a:0?", "-t", str(end - start),
-                              "-r", "30"] + encoder() + ENC + [name], cwd=scratch)
-                pieces.append(name)
-        listing = scratch / "join.txt"
-        listing.write_text("".join(f"file '{name}'\n" for name in pieces), encoding="ascii")
-        destination = folder / f"clip_{index:02}.mp4"
-        partial = folder / f"clip_{index:02}.partial.mp4"
-        command(FF + ["-y", "-f", "concat", "-safe", "1", "-i", listing.name,
-                      "-c", "copy", "-movflags", "+faststart", str(partial)], cwd=scratch)
-        partial.replace(destination)
-        report["clips"][index - 1]["output"] = destination.name
-        report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-        for name in [*pieces, "join.txt", "legend.ass"]:
-            (scratch / name).unlink(missing_ok=True)
-        scratch.rmdir()
-        log(f"Pronto: {destination}")
+    for index, (by_style, words) in enumerate(prepared, 1):
+        entry = report["clips"][index - 1]
+        for style, shots in by_style.items():
+            suffix = f"_{style}" if len(by_style) > 1 else ""
+            destination = folder / f"clip_{index:02}{suffix}.mp4"
+            render_clip(source, destination, shots, words, options)
+            entry["variants"][style]["output"] = destination.name
+            entry.setdefault("output", destination.name)
+            report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+            log(f"Pronto: {destination}")
 
 
 def twitch_source(value):
