@@ -1,22 +1,19 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-where ffmpeg >nul 2>&1 && where ffprobe >nul 2>&1
-if errorlevel 1 (
-  echo Instale FFmpeg com FFprobe e adicione ao PATH.
-  echo No Windows, uma opcao e: winget install Gyan.FFmpeg
-  goto error
-)
-if not exist ".venv\Scripts\python.exe" (
-  python -m venv .venv
-  if errorlevel 1 goto error
-)
-".venv\Scripts\python.exe" -m pip install -r requirements.txt
-if errorlevel 1 goto error
-echo Instalado. Abra Iniciar.cmd.
+if /I "%~1"=="--automatico" goto automatico
+if /I "%~1"=="--verificar" goto verificar
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File "%~dp0scripts\install.ps1"
+if errorlevel 1 goto erro
 pause
 exit /b 0
-:error
-echo Falha na instalacao. Confira a mensagem acima.
+:automatico
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File "%~dp0scripts\install.ps1" -InstallPrerequisites
+exit /b %errorlevel%
+:verificar
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File "%~dp0scripts\install.ps1" -Check
+exit /b %errorlevel%
+:erro
+echo Use Instalar.cmd --automatico para instalar pre-requisitos que estiverem faltando.
 pause
 exit /b 1

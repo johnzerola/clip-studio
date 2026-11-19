@@ -69,18 +69,39 @@ def audio_runs(shots, frame_counts, fps=30):
     return [(a, b, frames / fps) for a, b, frames in runs]
 
 
-def pick_broll(folder, shots, words):
-    if not folder:
-        return {}
+def pick_broll(folder, shots, words, *, full_screen=False, selected=()):
+    from broll_library import MEDIA
+
     assets = {}
-    for path in sorted(Path(folder).iterdir()):
-        cue = normalized(path.stem)
-        if path.is_file() and len(cue) >= 4 and path.suffix.lower() in {".mp4", ".mov", ".webm", ".png", ".jpg"}:
+    for path in sorted(Path(folder).iterdir()) if folder else ():
+        wide = full_screen and path.stem.casefold().startswith("tela-")
+        cue = normalized(path.stem[5:] if wide else path.stem)
+        if path.is_file() and len(cue) >= 4 and path.suffix.lower() in MEDIA:
             assets.setdefault(cue, path.resolve())
+    for path, cues in selected:
+        if path.is_file():
+            for cue in cues:
+                key = tuple(filter(None, (normalized(word) for word in cue.split())))
+                if key:
+                    assets.setdefault(key, path)
+    if not assets:
+        return {}
+    sizes = sorted({len(cue) for cue in assets if isinstance(cue, tuple)}, reverse=True)
     for i, (start, end, style) in enumerate(shots):
         if style not in {"split", "gamecam", "game"}:
             continue
-        for time, _, word in words:
-            if start + .5 <= time <= end - 1.3 and normalized(word) in assets:
-                return {i: (assets[normalized(word)], time - start)}
+        spoken = [(time, normalized(word)) for time, finish, word in words
+                  if time >= start and finish <= end and normalized(word)]
+        for index, (time, word) in enumerate(spoken):
+            if not start + .5 <= time <= end - 1.3:
+                continue
+            for size in sizes:
+                phrase = spoken[index:index + size]
+                if len(phrase) != size or phrase[-1][0] - time > size * .65:
+                    continue
+                asset = assets.get(tuple(token for _, token in phrase))
+                if asset:
+                    return {i: (asset, time - start)}
+            if word in assets:
+                return {i: (assets[word], time - start)}
     return {}

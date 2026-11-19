@@ -4,6 +4,7 @@ import csv
 import json
 import math
 import re
+import shutil
 import statistics
 import subprocess as sp
 import threading
@@ -11,11 +12,15 @@ import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from urllib.parse import urlparse
+from tempfile import TemporaryDirectory
+from urllib.parse import parse_qs, urlparse
 from editorial import Cleanup, clean_ranges, refine_montage, silence_edits, speech_gap_edits, transcript_edits
 from facecam import estimate, gameplay_region
+from broll_library import STILLS
 from finishing import accent_shots, caption_groups, pick_broll
 from effects_bank import edge_transition, render_cues
+from compression import compress
+import runtime_profile as runtime
 
 WIDTH, HEIGHT = 720, 1280
 FF = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin"]
@@ -51,10 +56,16 @@ class Options:
     transition: str = "zoom"
     sfx: str = "auto"
     sfx_peak: int = -8
+    compression: str = "original"
+    save_review: bool = True
+    broll_assets: tuple = ()
+    contextual_broll: bool = True
+    auto_music: bool | None = None
+    keep_manual_edges: bool = False
 
 
 def command(args, **kwargs):
-    result = sp.run(args, capture_output=True, **kwargs)
+    result = sp.run(runtime.multimedia_args(args), capture_output=True, **runtime.child_options(), **kwargs)
     if result.returncode:
         message = result.stderr.decode("utf-8", "replace").strip()
         raise RuntimeError(message[:1000] or str(args[0]))
@@ -71,9 +82,9 @@ def encoder():
     raise RuntimeError("O FFmpeg precisa do encoder libx264 ou libopenh264.")
 
 
-def probe(source):
+def probe(source, *, timeout=None):
     data = json.loads(command(["ffprobe", "-v", "error", "-show_streams", "-show_format",
-                               "-of", "json", str(source)]))
+                               "-of", "json", str(source)], timeout=timeout))
     video = next((s for s in data["streams"] if s["codec_type"] == "video"), None)
     if not video:
         raise ValueError("Fonte sem vídeo.")
@@ -104,15 +115,17 @@ def detect_facecam(source, duration):
     return estimate(frames, width, height)
 
 
-def inspect(source, duration, audio, face=""):
+def inspect(source, duration, audio, face="", *, normalized=True, start=0.):
     """Two-second samples. No rendering or speech model needed for this pass."""
+    window = (["-ss", str(start), "-i", str(source), "-t", str(duration)]
+              if start else ["-i", str(source), "-t", str(duration)])
     pcm = array.array("h")
     if audio:
-        pcm.frombytes(command(FF + ["-threads", "2", "-i", str(source), "-vn", "-ac", "1",
+        pcm.frombytes(command(FF + ["-threads", "2", *window, "-vn", "-ac", "1",
                                     "-ar", "800", "-f", "s16le", "pipe:1"]))
     width, height = 64, 36
     size = width * height
-    frames = command(FF + ["-threads", "2", "-filter_threads", "1", "-i", str(source),
+    frames = command(FF + ["-threads", "2", "-filter_threads", "1", *window,
                           "-an", "-vf", f"fps=1/2,scale={width}:{height},format=gray",
                           "-c:v", "rawvideo", "-threads", "1", "-f", "rawvideo", "pipe:1"])
     face_pixels = set()
@@ -130,13 +143,15 @@ def inspect(source, duration, audio, face=""):
         cam_motion = sum(changes[p] for p in face_pixels) if len(changes) == size else 0
         motion = (sum(changes) - cam_motion) / max(1, size - len(face_pixels))
         pairs.append((rms, motion, cam_motion / max(1, len(face_pixels))))
+    if not normalized:
+        return pairs
     baselines = [max(floor, statistics.median(p[k] for p in pairs))
                  for k, floor in enumerate((100, 2, 2))]
     return [tuple(min(5, value / baseline) for value, baseline in zip(pair, baselines)) for pair in pairs]
 
 
-def score(signals, start, end):
-    bins = signals[int(start // 2):math.ceil(end / 2)]
+def score(signals, start, end, offset=0):
+    bins = signals[int((start-offset) // 2):math.ceil((end-offset) / 2)]
     return round(statistics.mean(.58 * pair[0] + .42 * pair[1] for pair in bins), 3) if bins else 0
 
 
@@ -207,16 +222,27 @@ def layout_graph(style, options):
         return (crop(region) + f"scale={WIDTH}:{height}:force_original_aspect_ratio=increase:"
                 f"force_divisible_by=2,crop={WIDTH}:{height},setsar=1")
     focus = options.close_focus
-    face_fill = (crop(options.face) + f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase:"
-                 f"force_divisible_by=2,crop={WIDTH}:{HEIGHT}:(iw-ow)*{focus}:(ih-oh)/2,setsar=1")
+    v9_close = options.polish and options.transition == "v9"
+    visible_width = (.85 if v9_close else 1) - (.24 if v9_close else .30) * abs(2 * focus - 1)
+    face_focus = (f"crop=iw*{visible_width}:ih:(iw-ow)*{focus}:0,"
+                  if v9_close or focus != .5 else "")
+
+    def face_canvas(source, target):
+        return (f"{source}{crop(options.face)}split=2[facebg][facefg];"
+                f"[facebg]scale=180:320:force_original_aspect_ratio=increase:force_divisible_by=2,"
+                f"crop=180:320:(iw-ow)*{focus},gblur=sigma=14,drawbox=c=black@0.30:t=fill,"
+                f"scale={WIDTH}:{HEIGHT},setsar=1[soft];"
+                f"[facefg]{face_focus}scale={WIDTH}:850:flags=lanczos:force_original_aspect_ratio=decrease:"
+                f"force_divisible_by=2,setsar=1[talent];"
+                f"[soft][talent]overlay=(W-w)/2:175{target}")
     if style == "gamecam":
-        x = "W-w-34" if options.corner == "direito" else "34"
+        x = "W-w-22" if options.corner == "direito" else "22"
         circle = ("format=yuva444p,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':"
                   "a='if(lte((X-W/2)*(X-W/2)+(Y-H/2)*(Y-H/2),(W/2-2)*(W/2-2)),255,0)'")
         camera = (crop(options.face) + "scale=196:196:force_original_aspect_ratio=increase:"
                   f"force_divisible_by=2,crop=196:196:(iw-ow)*{focus}:(ih-oh)/2,setsar=1," + circle)
         return (f"[0:v]split=2[f][g];{game_canvas('[g]', '[main]')};"
-                f"[f]{camera}[cam];[main][cam]overlay={x}:246[base]")
+                f"[f]{camera}[cam];[main][cam]overlay={x}:190[base]")
     if style == "split":
         if options.look == "shorts":
             return (f"[0:v]split=2[f][g];[f]{fill(options.face, 500)}[top];"
@@ -225,15 +251,15 @@ def layout_graph(style, options):
                 f"[g]{fit(options.game, WIDTH, 840)}[bottom];[top][bottom]vstack[base]")
     if style == "reaction":
         x = "W-w-28" if options.corner == "direito" else "28"
-        return (f"[0:v]split=2[f][g];[f]{face_fill}[main];"
+        return (f"[0:v]split=2[f][g];{face_canvas('[f]', '[main]')};"
                 f"[g]{fit(options.game, 272, 156)},drawbox=color=white@0.8:t=2[pip];"
                 f"[main][pip]overlay={x}:92[base]")
     if style == "face":
-        return f"[0:v]{face_fill}[base]"
+        return face_canvas("[0:v]", "[base]")
     return game_canvas("[0:v]", "[base]")
 
 
-def layouts(signals, start, end, options, words=()):
+def layouts(signals, start, end, options, words=(), signal_offset=0):
     if not options.face:
         return [(start, end, "game")]
     if options.style != "dynamic":
@@ -241,14 +267,29 @@ def layouts(signals, start, end, options, words=()):
     segments = []
     point = start
     while point < end - .01:
-        stop = end if end - point < 8 else point + 4
-        bins = signals[int(point // 2):math.ceil(stop / 2)]
+        v9 = options.transition == "v9"
+        if v9 and end - point > 3.7:
+            desired = point + 3.
+            # Prefer a complete phrase or a natural gap over cutting the framing mid-word.
+            possible = [b for i, (_, b, text) in enumerate(words) if point + 1.9 <= b <= point + 3.7
+                        and (text.endswith((".", "!", "?")) or
+                             (i + 1 < len(words) and words[i + 1][0] - b >= .22))]
+            stop = min(possible, key=lambda moment: abs(moment - desired)) if possible else desired
+            if end - stop < 1.4:
+                stop = end
+        else:
+            stop = end if end - point < 8 else point + 4
+        bins = signals[int((point-signal_offset) // 2):math.ceil((stop-signal_offset) / 2)]
         activity = [statistics.mean(values) for values in zip(*bins)] if bins else []
         audio, motion, cam = (activity + [0, 0, 0])[:3]
-        reaction = any(point <= a < stop and ("!" in text or text.casefold().strip("!?.,") in
-                       {"caramba", "nossa", "mano", "wow", "eita"}) for a, _, text in words)
-        if (cam >= 1.45 and audio >= 1.2 and motion < cam * 1.4) or (
-                reaction and audio >= 1.4 and cam >= 1.05):
+        spoken = [text for a, _, text in words if point <= a < stop]
+        reaction = any("!" in text or text.casefold().strip("!?.,") in
+                       {"caramba", "nossa", "mano", "wow", "eita"} for text in spoken)
+        action_only = v9 and not spoken and motion >= 1.22 and motion >= 1.45 * cam
+        if action_only:
+            style = "game"
+        elif (cam >= 1.45 and audio >= 1.2 and motion < cam * 1.4) or (
+                reaction and audio >= (1.22 if v9 else 1.4) and cam >= 1.05):
             style = "face"
         elif motion >= 1.35 and motion > max(cam, audio) * 1.25:
             style = "game"
@@ -269,22 +310,32 @@ def stamp(seconds):
     return f"{ticks // 360000}:{ticks // 6000 % 60:02}:{ticks // 100 % 60:02}.{ticks % 100:02}"
 
 
-def transcribe(source, start, end, model="base"):
+def transcribe(source, start, end, model=None):
     import numpy as np
     from faster_whisper import WhisperModel
+    from huggingface_hub.errors import LocalEntryNotFoundError
 
-    pcm = command(FF + ["-ss", str(start), "-i", str(source), "-t", str(end - start),
+    model = model or ("tiny" if runtime.active.low_priority else "base")
+    pcm = command(FF + ["-threads", "1", "-ss", str(start), "-i", str(source), "-t", str(end - start),
                         "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "pipe:1"])
     if not pcm:
         return []
     samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
     with MODEL_LOCK:
-        if model not in MODELS:
-            MODELS[model] = WhisperModel(model, device="cpu", compute_type="int8", cpu_threads=2,
-                                         download_root=str(Path(__file__).parent / "models"))
-        segments, _ = MODELS[model].transcribe(samples, word_timestamps=True, vad_filter=True,
+        threads = runtime.active.whisper_threads
+        entry = MODELS.get(model)
+        if not entry or entry[0] != threads:
+            MODELS.pop(model, None)
+            config = {"device": "cpu", "compute_type": "int8", "cpu_threads": threads,
+                      "download_root": str(Path(__file__).parent / "models")}
+            try:
+                whisper = WhisperModel(model, local_files_only=True, **config)
+            except LocalEntryNotFoundError:
+                whisper = WhisperModel(model, **config)
+            MODELS[model] = (threads, whisper)
+        segments, _ = MODELS[model][1].transcribe(samples, word_timestamps=True, vad_filter=True,
                                                beam_size=1 if model == "tiny" else 5)
-        return [(start + w.start, start + w.end, w.word.strip())
+        return [(float(start + w.start), float(start + w.end), w.word.strip())
                 for s in segments for w in (s.words or []) if w.word.strip()]
 
 
@@ -365,15 +416,39 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 
 def render_clip(source, destination, shots, words, options, hook="", timing_words=None):
+    with TemporaryDirectory(prefix=".render-", dir=destination.parent) as directory:
+        return _render_clip(source, destination, shots, words, options, Path(directory), hook, timing_words)
+
+
+def _render_clip(source, destination, shots, words, options, scratch, hook, timing_words):
     from audio_finish import loudness_filter, make_mix, program
 
-    scratch = destination.with_suffix("")
-    scratch.mkdir()
+    from v9_finish import contextual_card, music_bed
+
     source = media_for_seeking(source, scratch / "source.mp4")
+    total, audio = probe(source)
     pieces = []
+    compact_once = runtime.active.low_priority and options.compression == "compacto"
+    video_encoder = encoder()
+    if compact_once and "-crf" in video_encoder:
+        video_encoder = [*video_encoder[:-1], "24"]
+    else:
+        compact_once = False
+    v9 = options.polish and options.transition == "v9"
     accents = accent_shots(shots) if options.polish else {}
-    inserts = pick_broll(options.broll_dir, shots, timing_words if timing_words is not None else words)
-    audio = probe(source)[1]
+    spoken = timing_words if timing_words is not None else words
+    inserts = pick_broll(options.broll_dir, shots, spoken, full_screen=v9, selected=options.broll_assets)
+    generated = contextual_card(scratch, shots, spoken) if v9 and options.contextual_broll and not inserts else {}
+    inserts = inserts or generated
+    dissolve = next((i for i, (start, end, style) in enumerate(shots) if i and style == "face"
+                     and end - start >= .9 and shots[i - 1][2] in {"game", "gamecam", "split"}
+                     and shots[i - 1][1] - shots[i - 1][0] >= 1.35
+                     and shots[i - 1][1] + .24 < total), None) if v9 else None
+    blends, v9_cues = [], []
+    music = str(Path(options.music).resolve()) if options.music else ""
+    auto_music = v9 if options.auto_music is None else options.auto_music
+    if auto_music and not music and audio:
+        music = str(music_bed(scratch / "pulso-v9.wav"))
     elapsed = 0.0
     frame_counts = []
     punches = []
@@ -387,28 +462,73 @@ def render_clip(source, destination, shots, words, options, hook="", timing_word
         layer = "[base]"
         inputs = []
         opening_punch = index == 0 and (style == "face" or (style == "split" and hook))
-        highlight_punch = index in accents and style == "face"
-        if options.polish and options.transition == "zoom" and end - start >= .9 and (opening_punch or highlight_punch):
+        highlight_punch = (index in accents or index == dissolve) and style == "face"
+        if v9 and frames >= 27 and (opening_punch or highlight_punch):
+            from v9_finish import camera_move
+
+            amount = .065 if highlight_punch else .045
+            # Anchor the reframe in the portrait, including the split's upper panel.
+            anchor = (.50, .38 if style == "split" else .43)
+            graph += camera_move(layer, "[punch]", frames, amount, anchor)
+            punches.append({"shot": index + 1, "zoom": 1 + amount, "anchor": anchor,
+                            "attack_frames": 8, "return_frames": 10 if frames >= 42 else 0})
+            layer = "[punch]"
+        elif options.polish and options.transition == "zoom" and end - start >= .9 and (opening_punch or highlight_punch):
             amount = .09 if highlight_punch else .04
-            punches.append({"shot": index + 1, "zoom": 1+amount})
+            punches.append({"shot": index + 1, "zoom": 1+amount, "return_frames": 0})
             graph += (f";{layer}fps=30,zoompan=z='1+{amount}*(1-exp(-on/4))':"
                       "x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s=720x1280:fps=30[punch]")
             layer = "[punch]"
         if options.polish and options.transition == "linha" and index in accents:
             graph += edge_transition(layer, "[transition]")
             layer = "[transition]"
+        insert_full = False
         if index in inserts:
             asset, at = inserts[index]
-            inputs = (["-loop", "1"] if asset.suffix.lower() in {".png", ".jpg"} else
+            insert_full = v9 and asset.stem.casefold().startswith("tela-")
+            inputs = (["-loop", "1"] if asset.suffix.lower() in STILLS else
                       ["-stream_loop", "-1"]) + ["-i", str(asset)]
-            graph += (";[1:v]trim=duration=1.15,setpts=PTS-STARTPTS,"
-                      "scale=290:164:force_original_aspect_ratio=decrease:force_divisible_by=2,"
-                      "pad=290:164:(ow-iw)/2:(oh-ih)/2,drawbox=c=white@0.7:t=2,format=yuva420p,"
-                      "fade=t=in:d=0.10:alpha=1,fade=t=out:st=1.02:d=0.12:alpha=1,"
-                      f"setpts=PTS+{at:.3f}/TB[detail];"
-                      f"{layer}[detail]overlay=W-w-48:680:eof_action=pass:"
-                      f"enable='between(t,{at:.3f},{at+1.15:.3f})'[inserted]")
+            if insert_full:
+                graph += (";[1:v]fps=30,trim=duration=1.15,setpts=PTS-STARTPTS,"
+                          "scale=720:1280:force_original_aspect_ratio=increase:force_divisible_by=2,"
+                          f"crop=720:1280,setsar=1,setpts=PTS+{at:.3f}/TB[detail];"
+                          f"{layer}[detail]overlay=0:0:eof_action=pass:"
+                          f"enable='gte(t,{at:.3f})*lt(t,{at+1.15:.3f})'[inserted]")
+            else:
+                slide = f":x='W-w-48+14*max(0,1-(t-{at:.3f})/0.16)^2':y=680" if v9 else ":x=W-w-48:y=680"
+                graph += (";[1:v]trim=duration=1.15,setpts=PTS-STARTPTS,"
+                          "scale=290:164:force_original_aspect_ratio=decrease:force_divisible_by=2,"
+                          "pad=290:164:(ow-iw)/2:(oh-ih)/2,drawbox=c=white@0.7:t=2,format=yuva420p,"
+                          "fade=t=in:d=0.10:alpha=1,fade=t=out:st=1.02:d=0.12:alpha=1,"
+                          f"setpts=PTS+{at:.3f}/TB[detail];"
+                          f"{layer}[detail]overlay=eof_action=pass{slide}:"
+                          f"enable='between(t,{at:.3f},{at+1.15:.3f})'[inserted]")
             layer = "[inserted]"
+        if v9 and style == "face":
+            graph += f";{layer}hue=s=1.035,unsharp=5:5:0.25[graded]"
+            layer = "[graded]"
+        elif v9 and style in {"game", "gamecam"}:
+            graph += f";{layer}curves=all='0/0.006 0.2/0.218 0.75/0.76 1/1',format=yuv420p[graded]"
+            layer = "[graded]"
+        if index == dissolve:
+            outgoing = scratch / "cauda.mp4"
+            _, tail, previous_style = shots[index - 1]
+            tail_graph = layout_graph(previous_style, options) + ";[base]fps=30,setsar=1,format=yuv420p[out]"
+            command(FF + ["-y", "-threads", "2", "-ss", str(tail), "-i", str(source),
+                          "-filter_complex_threads", "1", "-filter_complex", tail_graph,
+                          "-map", "[out]", "-an", "-frames:v", "7", *video_encoder, *ENC, str(outgoing)])
+            input_index = 2 if inputs else 1
+            inputs += ["-i", str(outgoing)]
+            graph += (f";[{input_index}:v]fps=30,setsar=1,format=yuv420p,setpts=PTS-STARTPTS[tail];"
+                      f"{layer}fps=30,setsar=1,format=yuv420p,setpts=PTS-STARTPTS[incoming];"
+                      "[tail][incoming]xfade=transition=fade:duration=0.166667:offset=0[blended]")
+            layer = "[blended]"
+            blends.append({"frame": frame_start, "duration_frames": 5})
+        if v9 and options.sfx != "nenhum":
+            if index in inserts:
+                v9_cues.append((frame_start / 30 + inserts[index][1], "whoosh" if insert_full else "radio", -15))
+            if index == dissolve:
+                v9_cues.append(((frame_start - 1) / 30, "impacto", -12))
         if words or hook:
             subtitles(scratch / "legend.ass", words, start, end, style, options.look, hook, shots[0][0])
             graph += f";{layer}ass=legend.ass[out]"
@@ -417,17 +537,17 @@ def render_clip(source, destination, shots, words, options, hook="", timing_word
         command(FF + ["-y", "-threads", "2", "-ss", str(start), "-i", str(source),
                       *inputs, "-filter_complex_threads", "1", "-filter_complex", graph,
                       "-map", "[out]", "-an", "-r", "30", "-frames:v", str(frames)]
-                + encoder() + ENC + [name], cwd=scratch)
+                + video_encoder + ENC + [name], cwd=scratch)
         pieces.append(name)
     listing = scratch / "join.txt"
     listing.write_text("".join(f"file '{name}'\n" for name in pieces), encoding="ascii")
-    partial = destination.with_suffix(".partial.mp4")
+    partial = scratch / "joined.mp4"
     join = FF + ["-y", "-f", "concat", "-safe", "1", "-i", listing.name]
     cues = [(time, options.sfx if options.sfx != "auto" else
              {"face": "impacto", "gamecam": "radio"}.get(shots[index][2], "whoosh"))
-            for index, time in accents.items()] if options.sfx != "nenhum" else []
+            for index, time in accents.items()] if options.sfx != "nenhum" and not v9 else v9_cues
     jcuts, gains = [], []
-    if audio or options.music or cues:
+    if audio or music or cues:
         duration = sum(frame_counts) / 30
         if audio:
             jcuts, gains = program(lambda args: command(FF + args), source, shots, frame_counts,
@@ -437,9 +557,9 @@ def render_clip(source, destination, shots, words, options, hook="", timing_word
                           "-t", str(duration), "program.wav"], cwd=scratch)
         if cues:
             render_cues(scratch / "cues.wav", duration, cues, options.sfx_peak)
-        if cues or options.music or options.voice_polish:
-            music = str(Path(options.music).resolve()) if options.music else ""
-            make_mix(FF, command, scratch, duration, options.voice_polish, music, options.music_db, bool(cues))
+        if cues or music or options.voice_polish:
+            make_mix(FF, command, scratch, duration, options.voice_polish, music,
+                     -21 if v9 and options.auto_music is None and not options.music else options.music_db, bool(cues))
             join += ["-i", "mix.wav", "-map", "1:a:0"]
             if options.voice_polish:
                 join += ["-af", loudness_filter(FF, scratch), "-ar", "48000"]
@@ -449,17 +569,21 @@ def render_clip(source, destination, shots, words, options, hook="", timing_word
     else:
         join += ["-c", "copy"]
     command(join + ["-movflags", "+faststart", str(partial)], cwd=scratch)
+    try:
+        compression = ({"profile": "compacto", "applied": True, "passes": 1,
+                        "after_bytes": partial.stat().st_size, "codec": "h264"}
+                       if compact_once else compress(partial, options.compression))
+    except (OSError, ValueError, StopIteration, sp.SubprocessError) as error:
+        compression = {"profile": options.compression, "applied": False,
+                       "reason": f"Compressão falhou: {type(error).__name__}"}
     partial.replace(destination)
-    for name in [*pieces, "join.txt", "legend.ass", "cues.wav", "program.wav", "mix.wav", "source.mp4"]:
-        (scratch / name).unlink(missing_ok=True)
-    scratch.rmdir()
     return {"accents": list(accents.values()), "broll": [asset.name for asset, _ in inserts.values()],
-            "transition": options.transition, "sound_cues": cues,
+            "transition": options.transition, "dissolves": blends, "sound_cues": cues, "compression": compression,
             "jcuts": jcuts, "punches": punches, "run_gains_db": gains, "voice_polish": options.voice_polish,
-            "music": Path(options.music).name if options.music else None}
+            "music": Path(music).name if music else None}
 
 
-def process(source, folder, options, log):
+def process(source, folder, options, log, *, screening=None, staging_dir=None, on_review=None):
     from dataclasses import replace
 
     folder.mkdir(parents=True, exist_ok=True)
@@ -476,8 +600,15 @@ def process(source, folder, options, log):
     if options.style == "all" and not options.face:
         options = replace(options, style="game")
         log("Exportação sem facecam: gerando uma versão de gameplay.")
-    signals = inspect(source, total, audio, options.face)
+    handpicked = bool(options.manual and options.keep_manual_edges)
+    signals = [] if handpicked else inspect(source, total, audio, options.face)
     selected = plan(signals, total, options)
+    editorial_signals = {}
+    if handpicked:
+        for low, high in options.manual:
+            offset = int(low // 2) * 2
+            editorial_signals[(low, high)] = (inspect(source, high - offset, audio, options.face, start=offset),
+                                              offset)
     report = {"schema": 1, "source": str(source), "original_source": str(original_source),
               "duration": total, "unit": "seconds",
               "method": "manual" if options.manual else "relative_audio_and_motion",
@@ -487,38 +618,53 @@ def process(source, folder, options, log):
     prepared = []
     styles = ("dynamic", "split", "reaction") if options.style == "all" else (options.style,)
     for index, parts in enumerate(selected, 1):
-        log(f"Preparando montagem {index}/{len(selected)}")
+        log(f"Edição {index}/{len(selected)}: preparando os trechos selecionados.")
         shared_words = None
         if audio and cleanup.speech and not options.manual:
+            log("Transcrevendo a fala para ajustar os cortes às frases.")
             shared_words = transcribe(source, max(0, parts[0][0] - 3), min(total, parts[-1][1] + 3))
             parts = refine_montage(parts, shared_words, total)
         kept, removals, transcript = [], [], []
+        range_signals = {}
         for low, high in parts:
             words = ([w for w in shared_words if w[0] < high and w[1] > low]
                      if shared_words is not None else [])
             if audio and shared_words is None and (cleanup.fillers or cleanup.repeats or cleanup.speech_gaps
-                                                   or options.hook or options.broll_dir
+                                                   or options.hook or options.broll_dir or options.broll_assets or screening
                                                    or (options.render and options.captions)):
+                log(f"Transcrevendo o trecho de {low:.1f}s a {high:.1f}s.")
                 words = transcribe(source, low, high)
             edits = list(transcript_edits(words, cleanup))
             if cleanup.speech_gaps:
                 edits.extend(speech_gap_edits(words, cleanup))
             if audio and cleanup.silence:
                 edits.extend(audio_silences(source, low, high, cleanup))
+            if options.manual and options.keep_manual_edges:
+                edits = [edit for edit in edits if edit[0] > low + .20 and edit[1] < high - .20]
             ranges, removed = clean_ranges(low, high, edits, words)
             kept.extend(ranges)
+            for segment in ranges:
+                range_signals[segment] = editorial_signals.get((low, high), (signals, 0))
             removals.extend(removed)
             transcript.extend(words)
         by_style = {style: [shot for low, high in kept
-                            for shot in layouts(signals, low, high, replace(options, style=style), transcript)]
+                            for shot in layouts(range_signals[(low, high)][0], low, high,
+                                                replace(options, style=style), transcript,
+                                                signal_offset=range_signals[(low, high)][1])]
                     for style in styles}
         spoken = [word for word in transcript if any(a <= (word[0] + word[1]) / 2 < b for a, b in kept)]
+        if options.render and options.captions:
+            log(f"Legendas: {len(spoken)} palavras reconhecidas." if spoken else
+                "Legendas: nenhuma fala reconhecida no trecho.")
+        log(f"Edição: {len(kept)} trecho(s), {len(removals)} remoção(ões).")
         hook = ""
         if options.hook:
             hook = opening_phrase(spoken, kept[0][0])
         report["clips"].append({
-            "parts": [dict(start=a, end=b, score=score(signals, a, b)) for a, b in kept],
+            "parts": [dict(start=a, end=b, score=score(range_signals[(a, b)][0], a, b, range_signals[(a, b)][1]))
+                      for a, b in kept],
             "removed": removals,
+            "caption_words": len(spoken) if options.render and options.captions else 0,
             "hook": hook,
             "layouts": [dict(start=a, end=b, style=s) for a, b, s in by_style[styles[0]]],
             "variants": {key: {"layouts": [dict(start=a, end=b, style=s) for a, b, s in shots]}
@@ -534,20 +680,50 @@ def process(source, folder, options, log):
         for style, shots in by_style.items():
             suffix = f"_{style}" if len(by_style) > 1 else ""
             destination = folder / f"clip_{index:02}{suffix}.mp4"
-            finishing = render_clip(source, destination, shots, words if options.captions else [], options,
-                                    hook, timing_words=words)
-            entry["variants"][style]["output"] = destination.name
-            entry["variants"][style]["finishing"] = finishing
+            log(f"Renderizando {destination.name} ({style}, {len(shots)} plano(s)).")
+            variant = entry["variants"][style]
+            publish = (destination if screening is None else
+                       (staging_dir or folder) / f".review-{folder.name}-{destination.name}")
             try:
-                from review import export_review
-                review_path = destination.with_suffix(".otio")
-                export_review(source, shots, review_path, audio)
-                entry["variants"][style]["review"] = review_path.name
-            except (ImportError, RuntimeError, OSError) as error:
-                log(f"Timeline de revisão indisponível: {error}")
+                variant["finishing"] = render_clip(source, publish, shots,
+                                                   words if options.captions else [], options,
+                                                   hook, timing_words=words)
+                if screening is not None:
+                    from final_screen import evaluate
+                    log(f"Revisão técnica e editorial: {destination.name}.")
+                    model, threshold, prior = screening
+                    verdict = evaluate(publish, FF, command, sum(b - a for a, b, _ in shots),
+                                       words, model, threshold, prior)
+                    verdict["duration"] = sum(b - a for a, b, _ in shots)
+                    verdict["source"] = str(original_source)
+                    verdict["ranges"] = [(part["start"], part["end"]) for part in entry["parts"]]
+                    variant["screening"] = verdict
+                    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+                    if verdict["status"] != "ready":
+                        if on_review:
+                            on_review(destination, None, verdict, words, hook)
+                        log(f"Descartado depois da edição: {verdict['score']}/100 ({verdict['reason']}).")
+                        continue
+                    publish.replace(destination)
+                    if on_review:
+                        on_review(destination, destination, verdict, words, hook)
+                    log(f"Aprovado depois da edição: {verdict['score']}/100.")
+            finally:
+                if screening is not None:
+                    publish.unlink(missing_ok=True)
+            variant["output"] = destination.name
+            if options.save_review:
+                try:
+                    from review import export_review
+                    review_path = destination.with_suffix(".otio")
+                    export_review(source, shots, review_path, audio)
+                    entry["variants"][style]["review"] = review_path.name
+                except (ImportError, RuntimeError, OSError) as error:
+                    log(f"Timeline de revisão indisponível: {error}")
             entry.setdefault("output", destination.name)
             report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
             log(f"Pronto: {destination}")
+    return report
 
 
 def twitch_source(value):
@@ -562,11 +738,32 @@ def twitch_source(value):
 
 X_HOSTS = {"x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"}
 KICK_HOSTS = {"kick.com", "www.kick.com"}
+YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
+TIKTOK_HOSTS = {"tiktok.com", "www.tiktok.com"}
 
 
 def live_source(value):
     parsed = urlparse(value if "://" in value or "/" not in value else f"https://{value}")
-    if parsed.netloc.lower() in KICK_HOSTS:
+    host = parsed.netloc.lower()
+    path = parsed.path.rstrip("/")
+    if host in YOUTUBE_HOSTS and parsed.scheme in ("https", "http"):
+        video_id = (parse_qs(parsed.query).get("v", [""])[0] if path == "/watch" else
+                    path.rsplit("/", 1)[-1] if host == "youtu.be" or path.startswith(("/live/", "/shorts/")) else "")
+        if re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+            live = path.startswith("/live/")
+            return f"https://www.youtube.com/{'live/' if live else 'watch?v='}{video_id}", not live
+        channel = re.fullmatch(r"(/@[\w.-]{1,100}|/channel/UC[A-Za-z0-9_-]{22})(?:/live)?", path)
+        if channel and host != "youtu.be":
+            return f"https://www.youtube.com{channel[1]}/live", False
+        raise ValueError("No YouTube, use @canal, /live/ID ou a URL do vídeo gravado.")
+    if host in TIKTOK_HOSTS and parsed.scheme in ("https", "http"):
+        channel = re.fullmatch(r"(/@[A-Za-z0-9._]{1,48})(?:/live)?", path)
+        if channel:
+            return f"https://www.tiktok.com{channel[1]}/live", False
+        if re.fullmatch(r"/@[A-Za-z0-9._]{1,48}/video/\d+", path):
+            return f"https://www.tiktok.com{path}", True
+        raise ValueError("No TikTok, informe a URL completa do canal, live ou vídeo público.")
+    if host in KICK_HOSTS:
         path = parsed.path.strip("/")
         match = re.fullmatch(r"([A-Za-z0-9_-]{1,48})(?:/videos/([a-fA-F0-9-]{36}))?", path)
         if parsed.scheme not in ("https", "http") or match is None:
@@ -585,26 +782,28 @@ class BroadcastEnded(Exception):
     """The provider confirmed the broadcast ended."""
 
 
-def x_media(python, url):
+def extractor_live_media(python, url):
+    is_x = urlparse(url).hostname in X_HOSTS
+    platform = "X" if is_x else "TikTok"
     try:
         raw = command([python, "-m", "yt_dlp", "--ignore-config", "--compat-options", "no-certifi",
                        "--no-playlist", "--no-warnings",
                        "--socket-timeout", "12", "--extractor-retries", "0", "--dump-single-json",
                        "-f", "b[height<=720]/b", "--", url], timeout=25)
     except RuntimeError as error:
-        if "broadcast no longer exists" in str(error).casefold():
+        if is_x and "broadcast no longer exists" in str(error).casefold():
             raise BroadcastEnded("O X informou que esta transmissão não está mais disponível.") from error
         raise
     info = json.loads(raw)
     if info.get("live_status") in {"post_live", "was_live"} or info.get("was_live"):
-        raise BroadcastEnded("O X informou que a transmissão já terminou.")
+        raise BroadcastEnded(f"A plataforma {platform} informou que a transmissão já terminou.")
     if not (info.get("is_live") or info.get("live_status") == "is_live"):
         if info.get("live_status") == "is_upcoming":
-            raise RuntimeError("Transmissão do X agendada. Aguardando início.")
-        raise RuntimeError("O X ainda não retornou uma transmissão de vídeo ao vivo para este link.")
+            raise RuntimeError(f"Transmissão agendada no {platform}. Aguardando início.")
+        raise RuntimeError(f"Sem vídeo ao vivo disponível neste link do {platform}.")
     media = info.get("url", "")
     if urlparse(media).scheme not in ("https", "http"):
-        raise RuntimeError("O X não retornou um endereço de mídia HTTP utilizável.")
+        raise RuntimeError(f"Sem endereço de mídia HTTP utilizável no {platform}.")
     headers = [f"{k}: {v}\r\n" for k, v in (info.get("http_headers") or {}).items()
                if re.fullmatch(r"[A-Za-z0-9-]+", k) and isinstance(v, str) and not re.search(r"[\r\n]", v)]
     return ["-rw_timeout", "20000000", "-tls_verify", "1",
@@ -617,27 +816,88 @@ def streamlink_cli(python):
     return [python, "-c", bootstrap]
 
 
-def fetch_vod(python, url, folder):
-    path = folder / "vod.ts"
-    command(streamlink_cli(python) + ["--loglevel", "error", "--output", str(path),
-             url, "720p,480p,best"], timeout=21600)
-    return path
+def fetch_vod(python, url, folder, *, max_bytes=None, stop=None):
+    host = urlparse(url).hostname
+    mp4 = folder / "vod.mp4"
+    ts = folder / "vod.ts"
+    download = [python, "-m", "yt_dlp", "--ignore-config", "--compat-options", "no-certifi",
+                "--no-playlist", "--match-filter", "!is_live", "--socket-timeout", "15",
+                "-f", "bv*[height<=1080]+ba/b[height<=1080]/b", "--merge-output-format", "mp4",
+                "--remux-video", "mp4", "-o", str(mp4), "--", url]
+    if max_bytes:
+        download[3:3] = ["--max-filesize", str(max_bytes)]
+
+    def transfer(args, target):
+        with (folder / "download.log").open("ab") as log:
+            with sp.Popen(args, stdout=log, stderr=log, stdin=sp.DEVNULL, **runtime.child_options()) as child:
+                try:
+                    deadline = time.monotonic() + 21600
+                    while child.poll() is None:
+                        if stop and stop.is_set():
+                            raise InterruptedError("Download interrompido.")
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError("Tempo limite do download atingido.")
+                        if not capture_space(folder):
+                            raise OSError("Volume com menos de 256 MiB livres.")
+                        if max_bytes and sum(file.stat().st_size for file in folder.glob("vod*")
+                                             if file.is_file()) > max_bytes:
+                            raise OSError("Limite de espaço da captura atingido.")
+                        try:
+                            child.wait(timeout=1)
+                        except sp.TimeoutExpired:
+                            pass
+                    if child.returncode or not target.is_file():
+                        raise RuntimeError(f"Download indisponível. Consulte {folder / 'download.log'}.")
+                finally:
+                    if child.poll() is None:
+                        child.kill()
+                        child.wait()
+        probe(target)
+        return target
+
+    if host in YOUTUBE_HOSTS | TIKTOK_HOSTS:
+        return transfer(download, mp4)
+    try:
+        return transfer(streamlink_cli(python) + ["--loglevel", "error", "--output", str(ts),
+                                                 url, "720p,480p,best"], ts)
+    except (RuntimeError, ValueError):
+        if host not in KICK_HOSTS:
+            raise
+        # The primary transport can fail while yt-dlp resolves the same public replay.
+        ts.unlink(missing_ok=True)
+        return transfer(download, mp4)
 
 
-def capture(python, url, folder, minutes, schedule, stop, log, wait_minutes=0, segment_seconds=120):
-    """Wait for a live source and reconnect briefly if its transport drops."""
+CAPTURE_RESERVE = 256 * 1024 * 1024
+
+
+def capture_space(folder):
+    reserve = 2 * 1024**3 if runtime.active.low_priority else CAPTURE_RESERVE
+    return shutil.disk_usage(folder).free >= reserve
+
+
+def capture(python, url, folder, minutes, schedule, stop, log, wait_minutes=0, segment_seconds=120,
+            *, continuous=False, catchup=False, offline_seconds=45):
+    """Wait for a live source and optionally return to watching between broadcasts."""
     ready_by = time.monotonic() + wait_minutes * 60
     deadline = None
     last_media = None
     attempt = 0
     while not stop.is_set():
+        if not capture_space(folder):
+            log(f"Captura em pausa: mantenha 256 MiB livres no destino {folder}.")
+            if not continuous:
+                return
+            stop.wait(45)
+            continue
         attempt += 1
         target = folder / f"conexao_{attempt:03}"
         target.mkdir()
         started = time.monotonic()
         seconds = (max(1, round(deadline - started)) if deadline else (minutes * 60 if minutes else None))
         try:
-            found = capture_once(python, url, target, seconds, schedule, stop, log, segment_seconds)
+            found = capture_once(python, url, target, seconds, schedule, stop, log, segment_seconds,
+                                 catchup=catchup and (last_media is None or started - last_media >= 180))
         except BroadcastEnded as error:
             log(str(error))
             return
@@ -653,6 +913,20 @@ def capture(python, url, folder, minutes, schedule, stop, log, wait_minutes=0, s
         if stop.is_set() or (deadline and now >= deadline - 2):
             return
         retry_until = last_media + 70 if last_media is not None else ready_by
+        if continuous:
+            # Empty attempts contain diagnostics only; retain the current one without
+            # letting idle checks create directories indefinitely.
+            previous = folder / f"conexao_{attempt - 1:03}"
+            ledger = previous / "captura.csv"
+            if (previous.is_dir() and (not ledger.exists() or not ledger.stat().st_size)
+                    and not any(p.suffix == ".ts" for p in previous.iterdir())):
+                for name in ("captura.log", "captura.csv"):
+                    (previous / name).unlink(missing_ok=True)
+                if not any(previous.iterdir()):
+                    previous.rmdir()
+            log(f"{'Reconectando' if last_media and now < retry_until else 'Monitorando canal'}: {url}")
+            stop.wait(20 if last_media and now < retry_until else offline_seconds)
+            continue
         if now >= retry_until:
             if not found and last_media is None:
                 log(f"Nenhum vídeo ao vivo para {url}. Consulte {target / 'captura.log'}")
@@ -663,44 +937,55 @@ def capture(python, url, folder, minutes, schedule, stop, log, wait_minutes=0, s
         stop.wait(min(20, max(0, retry_until - now)))
 
 
-def capture_once(python, url, folder, seconds, schedule, stop, log, segment_seconds):
+def capture_once(python, url, folder, seconds, schedule, stop, log, segment_seconds, *, catchup=False):
     """Own the capture processes and send only segments closed by FFmpeg."""
-    seen = set()
+    found = False
+    position = 0
+    fragment = b""
     index = folder / "captura.csv"
     deadline = time.monotonic() + seconds + 40 if seconds else float("inf")
 
     def queue_finished():
+        nonlocal found, position, fragment
         if not index.exists():
             return
-        rows = list(csv.reader(index.read_text(encoding="utf-8").splitlines()))
-        for row in rows:
-            if len(row) != 3 or row[0] in seen or not re.fullmatch(r"live_\d+\.ts", row[0]):
+        with index.open("rb") as manifest:
+            manifest.seek(position)
+            rows = (fragment + manifest.read()).split(b"\n")
+            position = manifest.tell()
+        fragment = rows.pop()
+        for row in csv.reader(line.decode("utf-8").strip() for line in rows):
+            if len(row) != 3 or not re.fullmatch(r"live_\d+\.ts", row[0]):
                 continue
             path = folder / row[0]
             if path.exists():
-                seen.add(row[0])
+                found = True
                 minimum = 2 if segment_seconds <= 30 else 8
                 if path.stat().st_size and float(row[2]) - float(row[1]) >= minimum:
                     schedule(path, folder / path.stem)
 
     host = urlparse(url).netloc.lower()
-    x = host in X_HOSTS
-    latency = [] if host in KICK_HOSTS else ["--twitch-low-latency"]
-    input_args = x_media(python, url) if x else ["-i", "pipe:0"]
+    direct = host in X_HOSTS | TIKTOK_HOSTS
+    dvr = catchup and not direct
+    latency = (["--hls-live-restart", "--stream-segment-threads", str(runtime.active.dvr_threads)] if dvr else
+               ["--twitch-low-latency"] if host == "www.twitch.tv" else [])
+    input_args = extractor_live_media(python, url) if direct else ["-i", "pipe:0"]
     if stop.is_set():
         return False
+    if dvr:
+        log(f"Recuperando o início ainda disponível na janela pública de {url}.")
     with (folder / "captura.log").open("wb") as errors:
-        sl = None if x else sp.Popen(streamlink_cli(python) + ["--stdout", *latency,
-                                      "--loglevel", "warning", url, "480p,360p,best"],
-                                     stdout=sp.PIPE, stderr=errors)
+        sl = None if direct else sp.Popen(streamlink_cli(python) + ["--stdout", *latency,
+                                      "--loglevel", "warning", url, runtime.active.quality],
+                                     stdout=sp.PIPE, stderr=errors, **runtime.child_options())
         ff = None
         try:
-            ff = sp.Popen((FF[:-1] if x else FF) + input_args + ["-map", "0:v:0", "-map", "0:a:0?"]
+            ff = sp.Popen((FF[:-1] if direct else FF) + input_args + ["-map", "0:v:0", "-map", "0:a:0?"]
                           + (["-t", str(seconds)] if seconds else [])
                           + ["-c", "copy", "-f", "segment",
                                 "-segment_time", str(segment_seconds), "-reset_timestamps", "1",
                                 "-segment_list", index.name, "-segment_list_type", "csv",
-                                "live_%04d.ts"], stdin=sp.PIPE if x else sl.stdout, cwd=folder, stderr=errors)
+                                "live_%04d.ts"], stdin=sp.PIPE if direct else sl.stdout, cwd=folder, stderr=errors, **runtime.child_options())
             if sl is not None:
                 sl.stdout.close()
             log(f"Capturando {url}")
@@ -708,10 +993,16 @@ def capture_once(python, url, folder, seconds, schedule, stop, log, segment_seco
             signature = None
             while ff.poll() is None and not stop.wait(2) and time.monotonic() < deadline:
                 queue_finished()
+                if not capture_space(folder):
+                    log(f"Captura interrompida para preservar espaço em {folder}.")
+                    break
                 segment = max(folder.glob("live_*.ts"), default=None)
                 if segment is not None:
-                    current = (segment.name, segment.stat().st_size)
-                    if current != signature:
+                    try:
+                        current = (segment.name, segment.stat().st_size)
+                    except FileNotFoundError:
+                        current = None
+                    if current is not None and current != signature:
                         last_data, signature = time.monotonic(), current
                 if time.monotonic() - last_data > 65:
                     log(f"Sem dados de vídeo na conexão: {url}")
@@ -723,7 +1014,7 @@ def capture_once(python, url, folder, seconds, schedule, stop, log, segment_seco
                     sl.terminate()
                 sl.wait()
             if ff is not None:
-                if x and ff.poll() is None:
+                if direct and ff.poll() is None:
                     try:
                         ff.stdin.write(b"q\n")
                         ff.stdin.flush()
@@ -737,4 +1028,4 @@ def capture_once(python, url, folder, seconds, schedule, stop, log, segment_seco
                 if ff.stdin is not None:
                     ff.stdin.close()
     queue_finished()
-    return bool(seen)
+    return found

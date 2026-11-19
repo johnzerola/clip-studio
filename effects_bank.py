@@ -59,8 +59,8 @@ def render_cues(path, duration, cues, peak_db=-8):
     if not 0 < duration <= 3600:
         raise ValueError("Duração fora do limite.")
     track = np.zeros(math.ceil(duration*RATE), dtype=np.float32)
-    for timestamp, name in cues:
-        data = sound(name, peak_db)
+    for timestamp, name, *gain in cues:
+        data = sound(name, gain[0] if gain else peak_db)
         start = max(0, round(timestamp*RATE))
         size = max(0, min(len(data), len(track)-start))
         track[start:start+size] += data[:size]

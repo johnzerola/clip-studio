@@ -1,0 +1,56 @@
+{
+  "name": "Alanzoka V9",
+  "reference_sha256": "316e21e2610b2027fdca737bd3dbb85e30543338ae6d3eb44537dcbcae81657e",
+  "duration_seconds": 14.5,
+  "fps": 30,
+  "frames": 435,
+  "canvas": [720, 1280],
+  "shots": [
+    {"frame_in": 0, "frame_out": 52, "layout": "face", "source_seconds": [22.22, 23.95]},
+    {"frame_in": 52, "frame_out": 148, "layout": "split", "source_seconds": [46.83, 50.03]},
+    {"frame_in": 148, "frame_out": 213, "layout": "game", "source_seconds": [50.03, 52.21]},
+    {"frame_in": 213, "frame_out": 261, "layout": "gamecam", "source_seconds": [53.3, 54.9]},
+    {"frame_in": 261, "frame_out": 314, "layout": "face", "source_seconds": [56.42, 58.17]},
+    {"frame_in": 314, "frame_out": 385, "layout": "split", "source_seconds": [6.52, 8.88]},
+    {"frame_in": 385, "frame_out": 435, "layout": "split", "source_seconds": [9.88, 11.56]}
+  ],
+  "transitions": {
+    "direct_frames": [52, 148, 213, 314, 385],
+    "dissolve": {"start_frame": 261, "duration_frames": 5, "seconds": 8.7, "curve": "linear", "captions_after_blend": true}
+  },
+  "overlays": {
+    "camera": {"layout": "gamecam", "shape": "circle", "gap_right_px": 22, "top_px": 190},
+    "close": {"layout": "face", "foreground_max_px": [720, 850], "top_px": 175, "backdrop": "blur from original camera"},
+    "split": {"face_height_px": 500, "game_height_px": 780},
+    "radio_card": {"from_seconds": 3.023, "duration_seconds": 1.15, "fade_in_seconds": 0.10, "fade_out_seconds": 0.12, "box_px": [382, 680, 290, 164], "trigger": "menção às músicas da rádio"}
+  },
+  "captions": {"appearance": "Arial bold em caixa alta, branco com palavra ativa amarela e contorno escuro", "position": "junção no split, zona inferior em face/game/gamecam", "max_words": 4},
+  "audio": {
+    "j_cut_lead_ms": 130,
+    "j_cut_video_frames": [52, 213, 261, 314, 385],
+    "cues": [
+      {"seconds": 3.02, "name": "radio", "isolated_peak_dbfs": -15, "duration_seconds": 0.22},
+      {"seconds": 8.67, "name": "impacto", "isolated_peak_dbfs": -12, "duration_seconds": 0.25}
+    ],
+    "music_setting_db": -21,
+    "measured_integrated_lufs": -15.9,
+    "measured_true_peak_dbtp": -2.3
+  },
+  "beats": [
+    {"second": 0, "until": 1, "picture": "Close com fundo difuso e gancho sobre a rádio", "edit": "Gancho na abertura e legenda inferior por palavra", "sound": "Fala à frente da trilha"},
+    {"second": 1, "until": 2, "picture": "Close até 1,733 s, seguido de rosto em cima e jogo embaixo", "edit": "Corte seco após a promessa de conflito", "sound": "A fala do plano seguinte entra cerca de 130 ms antes"},
+    {"second": 2, "until": 3, "picture": "Rosto em cima, direção da moto embaixo", "edit": "Legenda perto da junção entre as duas imagens", "sound": "Fala e gameplay"},
+    {"second": 3, "until": 4, "picture": "Cartão da rádio entra sobre a direita da gameplay", "edit": "Fade de entrada de três quadros, feito na menção às músicas", "sound": "Dois pulsos em 3,020 s"},
+    {"second": 4, "until": 5, "picture": "Cartão sai e o quadro abre para gameplay em 4,933 s", "edit": "Fade curto do cartão e corte seco do layout", "sound": "Fala contínua na troca de layout"},
+    {"second": 5, "until": 6, "picture": "Gameplay ocupa o quadro com extensão desfocada", "edit": "Legenda inferior, foco na manobra da moto", "sound": "Som do jogo e narração"},
+    {"second": 6, "until": 7, "picture": "Gameplay mantém a virada e a passagem iluminada", "edit": "Deixe a ação seguir dentro do mesmo plano", "sound": "Fala e trilha contínuas"},
+    {"second": 7, "until": 8, "picture": "Webcam redonda aparece no alto à direita em 7,100 s", "edit": "Corte seco para outro trecho de gameplay com a câmera", "sound": "Entrada antecipada da voz do próximo trecho"},
+    {"second": 8, "until": 9, "picture": "Gameplay com webcam dissolve para close a partir de 8,700 s", "edit": "Sobreposição de cinco quadros. Uma camada de legenda", "sound": "Batida grave em 8,670 s e J-cut"},
+    {"second": 9, "until": 10, "picture": "Close com cabelo, óculos e queixo visíveis", "edit": "Sustente a reação e a legenda na zona inferior", "sound": "Fala retoma o primeiro plano logo após a batida"},
+    {"second": 10, "until": 11, "picture": "Retorno ao dividido em 10,467 s", "edit": "Corte seco ao voltar à explicação", "sound": "Fala antecipada em cerca de 130 ms"},
+    {"second": 11, "until": 12, "picture": "Dividido acompanha a explicação e o avanço pela rua", "edit": "Legenda perto da junção do layout", "sound": "Fala sobre a trilha"},
+    {"second": 12, "until": 13, "picture": "Dividido mantém a composição; corte de continuidade em 12,833 s", "edit": "Salto de origem mantendo o enquadramento", "sound": "J-cut acompanha o salto"},
+    {"second": 13, "until": 14, "picture": "O streamer conclui o que fará com a música", "edit": "Mantenha rosto e ação legíveis até a resolução", "sound": "Voz e jogo"},
+    {"second": 14, "until": 14.5, "picture": "Dividido até o último quadro", "edit": "Última legenda acompanha a palavra final", "sound": "A resolução termina junto com o corte final"}
+  ]
+}

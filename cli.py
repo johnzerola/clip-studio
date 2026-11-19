@@ -23,7 +23,7 @@ def main():
     parser.add_argument("--jcut-ms", type=int, default=0)
     parser.add_argument("--music", default="")
     parser.add_argument("--music-db", type=int, default=-25)
-    parser.add_argument("--transition", choices=["corte", "linha", "zoom"], default="zoom")
+    parser.add_argument("--transition", choices=["corte", "linha", "zoom", "v9"], default="zoom")
     parser.add_argument("--sfx", choices=["auto", "whoosh", "radio", "impacto", "resolucao", "nenhum"], default="auto")
     parser.add_argument("--sfx-peak", type=int, default=-8)
     parser.add_argument("--game", default="")
@@ -33,6 +33,7 @@ def main():
     parser.add_argument("--ranges", default="")
     parser.add_argument("--contiguous", action="store_true")
     parser.add_argument("--render", action="store_true")
+    parser.add_argument("--compression", choices=("original", "compacto", "hevc"), default="compacto")
     parser.add_argument("--captions", action="store_true")
     parser.add_argument("--cut-silence", action="store_true")
     parser.add_argument("--cut-repeats", action="store_true")
@@ -66,7 +67,7 @@ def main():
                        not args.contiguous, args.duration, args.count, args.render, manual, cleanup, args.auto_face,
                        args.look, args.hook, args.polish, args.broll_dir, args.close_focus,
                        args.voice_polish, args.jcut_ms, args.music, args.music_db,
-                       args.transition, args.sfx, args.sfx_peak)
+                       args.transition, args.sfx, args.sfx_peak, args.compression)
         process(args.source, args.out.resolve(), opts, print)
     except (ValueError, RuntimeError, OSError) as error:
         parser.exit(1, f"{error}\n")
