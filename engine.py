@@ -325,11 +325,17 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         hook_y = 415 if style == "split" else 280
         lines.append(f"Dialogue: 1,{stamp(at-start)},{stamp(until-start)},Hook,,0,0,0,,"
                      + r"{\pos(360," + str(hook_y) + ")}" + ass_text(hook))
-    for group in caption_groups(words):
+    groups = list(caption_groups(words))
+    for index, group in enumerate(groups):
         if group[0][0] >= end or group[-1][1] + .13 <= start:
             continue
         for j, (a, b, _) in enumerate(group):
-            next_word = group[j + 1][0] if j + 1 < len(group) else b + .13
+            if j + 1 < len(group):
+                next_word = group[j + 1][0]
+            elif index + 1 < len(groups):
+                next_word = min(b + .13, groups[index + 1][0][0])
+            else:
+                next_word = b + .13
             limit, at = min(end, next_word, b + .19), max(start, a)
             if stamp(limit-start) == stamp(at-start) or limit <= at:
                 continue
