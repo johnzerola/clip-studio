@@ -294,6 +294,10 @@ def opening_phrase(words, start):
         chosen.append(cleaned)
         if len(chosen) >= 4 and (cleaned.endswith((".", "!", "?")) or len(chosen) == 8):
             break
+    connectors = {"e", "ou", "mas", "que", "de", "da", "do", "dos", "das", "para", "com",
+                  "and", "or", "but", "the", "a", "an", "of", "to", "with"}
+    while chosen and chosen[-1].casefold().strip(".,:;!?") in connectors:
+        chosen.pop()
     return " ".join(chosen).strip(" .,:;") if len(chosen) >= 4 else ""
 
 
