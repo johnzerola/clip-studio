@@ -16,6 +16,9 @@ def main():
     parser.add_argument("--auto-face", action="store_true")
     parser.add_argument("--look", choices=["classic", "shorts"], default="classic")
     parser.add_argument("--hook", action="store_true")
+    parser.add_argument("--polish", action="store_true", help="Adiciona transições visuais e sons discretos")
+    parser.add_argument("--broll-dir", default="", help="Pasta de mídia autorizada nomeada pela palavra de entrada")
+    parser.add_argument("--close-focus", type=float, default=.5, help="Posição horizontal do close, de 0 a 1")
     parser.add_argument("--game", default="")
     parser.add_argument("--corner", choices=["direito", "esquerdo"], default="direito")
     parser.add_argument("--duration", type=int, default=90)
@@ -38,6 +41,8 @@ def main():
         parser.error("Duração entre 10 e 180 s e quantidade entre 1 e 8.")
     if not (.3 <= args.min_pause <= 5 and -65 <= args.silence_db <= -18):
         parser.error("Use pausa entre 0,3 e 5 s e limiar entre -65 e -18 dBFS.")
+    if not 0 <= args.close_focus <= 1 or (args.broll_dir and not Path(args.broll_dir).is_dir()):
+        parser.error("Use centro do close entre 0 e 1 e uma pasta de B-roll existente.")
     try:
         crop(args.face)
         crop(args.game)
@@ -46,7 +51,7 @@ def main():
                           args.min_pause, args.silence_db, speech_gaps=args.cut_speech_gaps)
         opts = Options(args.style, args.face, args.game, args.corner, args.captions,
                        not args.contiguous, args.duration, args.count, args.render, manual, cleanup, args.auto_face,
-                       args.look, args.hook)
+                       args.look, args.hook, args.polish, args.broll_dir, args.close_focus)
         process(args.source, args.out.resolve(), opts, print)
     except (ValueError, RuntimeError, OSError) as error:
         parser.exit(1, f"{error}\n")

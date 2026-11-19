@@ -69,6 +69,9 @@ class Panel:
         self.auto_face = tk.BooleanVar(value=True)
         self.look = tk.StringVar(value="Shorts GTA")
         self.hook = tk.BooleanVar(value=True)
+        self.polish = tk.BooleanVar(value=True)
+        self.broll_dir = tk.StringVar()
+        self.close_focus = tk.DoubleVar(value=.5)
         self.preset = tk.StringVar(value="GTA / Reação")
         self.silence = tk.BooleanVar()
         self.repeats = tk.BooleanVar()
@@ -83,7 +86,7 @@ class Panel:
         self.saved_fields = {key: getattr(self, key) for key in (
             "preset", "style", "corner", "face", "game", "duration", "count", "minutes", "workers",
             "captions", "montage", "silence", "repeats", "fillers", "speech", "pause", "noise", "auto_face",
-            "speech_gaps", "wait_minutes", "output_dir", "look", "hook")}
+            "speech_gaps", "wait_minutes", "output_dir", "look", "hook", "polish", "broll_dir", "close_focus")}
         source_text = ""
         try:
             saved = json.loads(PREFERENCES.read_text(encoding="utf-8"))
@@ -111,7 +114,7 @@ class Panel:
         self.field(frame, 3, "Estilo", ttk.Combobox(frame, textvariable=self.style, values=list(STYLES), state="readonly"))
         self.field(frame, 4, "Facecam (opcional)", ttk.Entry(frame, textvariable=self.face))
         self.field(frame, 5, "Gameplay (opcional)", ttk.Entry(frame, textvariable=self.game))
-        ttk.Label(frame, text="Recortes em x,y,largura,altura de 0 a 1. Por fonte: canal | rosto | jogo"
+        ttk.Label(frame, text="Recortes de 0 a 1. Por fonte: canal | rosto | jogo | centro do close"
                   ).grid(row=6, column=1, columnspan=2, sticky="w")
         ttk.Checkbutton(frame, text="Buscar facecam", variable=self.auto_face).grid(row=6, column=0, sticky="w")
         self.field(frame, 7, "Canto da janela", ttk.Combobox(frame, textvariable=self.corner,
@@ -152,6 +155,15 @@ class Panel:
         ttk.Combobox(design, textvariable=self.look, values=list(LOOKS), state="readonly",
                      width=15).pack(side="left", padx=(6, 14))
         ttk.Checkbutton(design, text="Gancho inicial da fala", variable=self.hook).pack(side="left")
+        ttk.Checkbutton(design, text="Transições e som", variable=self.polish).pack(side="left", padx=10)
+        ttk.Label(design, text="Centro do close (0–1)").pack(side="left")
+        ttk.Spinbox(design, textvariable=self.close_focus, from_=0, to=1, increment=.05,
+                    width=5).pack(side="left", padx=4)
+        inserts = ttk.Frame(editorial)
+        inserts.grid(row=3, columnspan=5, sticky="ew", pady=(4, 0))
+        ttk.Label(inserts, text="B-roll local (opcional)").pack(side="left")
+        ttk.Entry(inserts, textvariable=self.broll_dir, width=45).pack(side="left", padx=6)
+        ttk.Button(inserts, text="Escolher…", command=self.pick_broll).pack(side="left")
         ttk.Label(frame, text="Pasta de saída").grid(row=12, column=0, sticky="w", pady=(8, 0))
         ttk.Entry(frame, textvariable=self.output_dir).grid(row=12, column=1, sticky="ew", pady=(8, 0))
         ttk.Button(frame, text="Escolher pasta…", command=self.pick_output).grid(row=12, column=2, padx=8, pady=(8, 0))
@@ -196,6 +208,11 @@ class Panel:
         folder = filedialog.askdirectory(initialdir=self.output_dir.get() or str(ROOT))
         if folder:
             self.output_dir.set(folder)
+
+    def pick_broll(self):
+        folder = filedialog.askdirectory(initialdir=self.broll_dir.get() or str(ROOT))
+        if folder:
+            self.broll_dir.set(folder)
 
     def output_path(self):
         value = self.output_dir.get().strip().strip('"')
@@ -249,11 +266,13 @@ class Panel:
             sources = []
             for line in dict.fromkeys(s.strip().strip('"') for s in self.sources.get("1.0", "end").splitlines() if s.strip()):
                 fields = [field.strip().strip('"') for field in line.split("|")]
-                if not fields[0] or len(fields) > 3:
-                    raise ValueError("Use uma fonte por linha, seguida opcionalmente de | rosto | jogo.")
+                if not fields[0] or len(fields) > 4:
+                    raise ValueError("Use fonte | rosto | jogo | centro do close. Só a fonte é obrigatória.")
                 value, *regions = fields
-                for region in regions:
+                for region in regions[:2]:
                     crop(region)
+                if len(regions) == 3 and not 0 <= float(regions[2]) <= 1:
+                    raise ValueError("O centro do close por fonte deve estar entre 0 e 1.")
                 path = Path(value)
                 if "://" not in value and path.is_file():
                     sources.append((str(path.resolve()), "file", regions))
@@ -287,9 +306,15 @@ class Panel:
                               speech_gaps=self.speech_gaps.get())
             if not (.3 <= cleanup.pause <= 5 and -65 <= cleanup.noise <= -18):
                 raise ValueError("Use pausa entre 0,3 e 5 s e limiar entre -65 e -18 dBFS.")
+            broll = self.broll_dir.get().strip()
+            focus = self.close_focus.get()
+            if broll and not Path(broll).is_dir():
+                raise ValueError("A pasta de B-roll não existe.")
+            if not 0 <= focus <= 1:
+                raise ValueError("Use um centro de close de 0 a 1.")
             options = Options(style, face, game, self.corner.get(), self.captions.get(),
                               self.montage.get(), duration, count, render, manual, cleanup, self.auto_face.get(),
-                              LOOKS[self.look.get()], self.hook.get())
+                              LOOKS[self.look.get()], self.hook.get(), self.polish.get(), broll, focus)
             try:
                 self.save_preferences()
             except OSError as error:
@@ -340,7 +365,10 @@ class Panel:
                 for i, (source, kind, regions) in enumerate(sources, 1):
                     source_name = f"{i:02}_{kind}"
                     result = batch / "Clipes prontos" / source_name
-                    settings = replace(options, **dict(zip(("face", "game"), regions)))
+                    overrides = dict(zip(("face", "game"), regions))
+                    if len(regions) == 3:
+                        overrides["close_focus"] = float(regions[2])
+                    settings = replace(options, **overrides)
                     if kind == "file":
                         schedule(Path(source), result, settings)
                     else:

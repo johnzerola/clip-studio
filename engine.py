@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from editorial import Cleanup, clean_ranges, refine_montage, silence_edits, speech_gap_edits, transcript_edits
 from facecam import estimate, gameplay_region
+from finishing import accent_shots, caption_groups, mix_cues, pick_broll
 
 WIDTH, HEIGHT = 720, 1280
 FF = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin"]
@@ -39,6 +40,9 @@ class Options:
     auto_face: bool = False
     look: str = "classic"
     hook: bool = False
+    polish: bool = False
+    broll_dir: str = ""
+    close_focus: float = 0.5
 
 
 def command(args, **kwargs):
@@ -186,14 +190,15 @@ def layout_graph(style, options):
     def fill(region, height):
         return (crop(region) + f"scale={WIDTH}:{height}:force_original_aspect_ratio=increase:"
                 f"force_divisible_by=2,crop={WIDTH}:{height},setsar=1")
+    focus = options.close_focus
     face_fill = (crop(options.face) + f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase:"
-                 f"force_divisible_by=2,crop={WIDTH}:{HEIGHT},setsar=1")
+                 f"force_divisible_by=2,crop={WIDTH}:{HEIGHT}:(iw-ow)*{focus}:(ih-oh)/2,setsar=1")
     if style == "gamecam":
         x = "W-w-34" if options.corner == "direito" else "34"
         circle = ("format=yuva444p,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':"
                   "a='if(lte((X-W/2)*(X-W/2)+(Y-H/2)*(Y-H/2),(W/2-2)*(W/2-2)),255,0)'")
         camera = (crop(options.face) + "scale=196:196:force_original_aspect_ratio=increase:"
-                  "force_divisible_by=2,crop=196:196,setsar=1," + circle)
+                  f"force_divisible_by=2,crop=196:196:(iw-ow)*{focus}:(ih-oh)/2,setsar=1," + circle)
         return (f"[0:v]split=2[f][g];{game_canvas('[g]', '[main]')};"
                 f"[f]{camera}[cam];[main][cam]overlay={x}:246[base]")
     if style == "split":
@@ -314,53 +319,79 @@ Style: Hook,Arial,44,&H00FFFFFF,&H00FFFFFF,&H00131824,&H00131824,-1,0,0,0,100,10
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
-    words = [(max(a, start), min(b, end), word) for a, b, word in words if a < end and b > start]
     lines = []
     if hook and opening is not None and start < opening + 2.7 and end > opening:
         at, until = max(start, opening), min(end, opening + 2.7)
         hook_y = 415 if style == "split" else 280
         lines.append(f"Dialogue: 1,{stamp(at-start)},{stamp(until-start)},Hook,,0,0,0,,"
                      + r"{\pos(360," + str(hook_y) + ")}" + ass_text(hook))
-    for i in range(0, len(words), 3):
-        group = words[i:i + 3]
+    for group in caption_groups(words):
+        if group[0][0] >= end or group[-1][1] + .13 <= start:
+            continue
         for j, (a, b, _) in enumerate(group):
-            limit = group[j + 1][0] if j + 1 < len(group) else min(end, b + .13)
-            if limit <= a:
+            next_word = group[j + 1][0] if j + 1 < len(group) else b + .13
+            limit, at = min(end, next_word, b + .19), max(start, a)
+            if stamp(limit-start) == stamp(at-start) or limit <= at:
                 continue
             phrase = " ".join((r"{\1c&H00DEFF&}" if k == j else r"{\1c&HFFFFFF&}")
                               + (ass_text(word).upper() if look == "shorts" else ass_text(word))
                               for k, (_, _, word) in enumerate(group))
-            lines.append(f"Dialogue: 0,{stamp(a-start)},{stamp(limit-start)},Caption,,0,0,0,,"
+            lines.append(f"Dialogue: 0,{stamp(at-start)},{stamp(limit-start)},Caption,,0,0,0,,"
                          + r"{\pos(360," + str(y) + ")}" + phrase)
     path.write_text(head + "\n".join(lines) + "\n", encoding="utf-8")
 
 
-def render_clip(source, destination, shots, words, options, hook=""):
+def render_clip(source, destination, shots, words, options, hook="", timing_words=None):
     scratch = destination.with_suffix("")
     scratch.mkdir()
     pieces = []
-    for start, end, style in shots:
+    accents = accent_shots(shots) if options.polish else {}
+    inserts = pick_broll(options.broll_dir, shots, timing_words if timing_words is not None else words)
+    for index, (start, end, style) in enumerate(shots):
         name = f"p{len(pieces):03}.mp4"
         graph = layout_graph(style, options)
+        layer = "[base]"
+        inputs = []
+        if index in inserts:
+            asset, at = inserts[index]
+            inputs = (["-loop", "1"] if asset.suffix.lower() in {".png", ".jpg"} else
+                      ["-stream_loop", "-1"]) + ["-i", str(asset)]
+            graph += (f";[1:v]trim=duration=1.15,setpts=PTS-STARTPTS+{at:.3f}/TB,"
+                      "scale=290:164:force_original_aspect_ratio=decrease:force_divisible_by=2,"
+                      "pad=290:164:(ow-iw)/2:(oh-ih)/2,drawbox=c=white@0.7:t=2[detail];"
+                      f"{layer}[detail]overlay=W-w-48:680:eof_action=pass:"
+                      f"enable='between(t,{at:.3f},{at+1.15:.3f})'[inserted]")
+            layer = "[inserted]"
+        if index in accents:
+            graph += f";{layer}fade=t=in:st=0:d=0.10:color=0x182335[accent]"
+            layer = "[accent]"
         if words or hook:
             subtitles(scratch / "legend.ass", words, start, end, style, options.look, hook, shots[0][0])
-            graph += ";[base]ass=legend.ass[out]"
+            graph += f";{layer}ass=legend.ass[out]"
         else:
-            graph += ";[base]null[out]"
+            graph += f";{layer}null[out]"
         command(FF + ["-y", "-threads", "2", "-ss", str(start), "-i", str(source),
-                      "-filter_complex_threads", "1", "-filter_complex", graph,
+                      *inputs, "-filter_complex_threads", "1", "-filter_complex", graph,
                       "-map", "[out]", "-map", "0:a:0?", "-t", str(end - start),
                       "-r", "30"] + encoder() + ENC + [name], cwd=scratch)
         pieces.append(name)
     listing = scratch / "join.txt"
     listing.write_text("".join(f"file '{name}'\n" for name in pieces), encoding="ascii")
     partial = destination.with_suffix(".partial.mp4")
-    command(FF + ["-y", "-f", "concat", "-safe", "1", "-i", listing.name,
-                  "-c", "copy", "-movflags", "+faststart", str(partial)], cwd=scratch)
+    join = FF + ["-y", "-f", "concat", "-safe", "1", "-i", listing.name]
+    if accents and probe(source)[1]:
+        mix_cues(scratch / "cues.wav", sum(b - a for a, b, _ in shots), accents.values())
+        join += ["-i", "cues.wav", "-filter_complex",
+                 "[0:a][1:a]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.92:level=false:latency=true[a]",
+                 "-map", "0:v:0", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k"]
+    else:
+        join += ["-c", "copy"]
+    command(join + ["-movflags", "+faststart", str(partial)], cwd=scratch)
     partial.replace(destination)
-    for name in [*pieces, "join.txt", "legend.ass"]:
+    for name in [*pieces, "join.txt", "legend.ass", "cues.wav"]:
         (scratch / name).unlink(missing_ok=True)
     scratch.rmdir()
+    return {"accents": list(accents.values()), "broll": [asset.name for asset, _ in inserts.values()]}
 
 
 def process(source, folder, options, log):
@@ -399,7 +430,8 @@ def process(source, folder, options, log):
             words = ([w for w in shared_words if w[0] < high and w[1] > low]
                      if shared_words is not None else [])
             if audio and shared_words is None and (cleanup.fillers or cleanup.repeats or cleanup.speech_gaps
-                                                   or options.hook or (options.render and options.captions)):
+                                                   or options.hook or options.broll_dir
+                                                   or (options.render and options.captions)):
                 words = transcribe(source, low, high)
             edits = list(transcript_edits(words, cleanup))
             if cleanup.speech_gaps:
@@ -413,10 +445,9 @@ def process(source, folder, options, log):
         by_style = {style: [shot for low, high in kept
                             for shot in layouts(signals, low, high, replace(options, style=style), transcript)]
                     for style in styles}
+        spoken = [word for word in transcript if any(a <= (word[0] + word[1]) / 2 < b for a, b in kept)]
         hook = ""
         if options.hook:
-            spoken = [word for word in transcript
-                      if any(a <= (word[0] + word[1]) / 2 < b for a, b in kept)]
             hook = opening_phrase(spoken, kept[0][0])
         report["clips"].append({
             "parts": [dict(start=a, end=b, score=score(signals, a, b)) for a, b in kept],
@@ -426,7 +457,7 @@ def process(source, folder, options, log):
             "variants": {key: {"layouts": [dict(start=a, end=b, style=s) for a, b, s in shots]}
                          for key, shots in by_style.items()}
         })
-        prepared.append((by_style, transcript if options.captions else [], hook))
+        prepared.append((by_style, spoken, hook))
     report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     log(f"{len(prepared)} corte(s) planejado(s) em {folder.name}")
     if not options.render:
@@ -436,8 +467,10 @@ def process(source, folder, options, log):
         for style, shots in by_style.items():
             suffix = f"_{style}" if len(by_style) > 1 else ""
             destination = folder / f"clip_{index:02}{suffix}.mp4"
-            render_clip(source, destination, shots, words, options, hook)
+            finishing = render_clip(source, destination, shots, words if options.captions else [], options,
+                                    hook, timing_words=words)
             entry["variants"][style]["output"] = destination.name
+            entry["variants"][style]["finishing"] = finishing
             entry.setdefault("output", destination.name)
             report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
             log(f"Pronto: {destination}")
