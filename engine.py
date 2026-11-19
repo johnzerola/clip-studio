@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from editorial import Cleanup, clean_ranges, refine_montage, silence_edits, speech_gap_edits, transcript_edits
 from facecam import estimate, gameplay_region
-from finishing import accent_shots, caption_groups, mix_cues, pick_broll
+from finishing import accent_shots, audio_runs, caption_groups, mix_cues, pick_broll
 
 WIDTH, HEIGHT = 720, 1280
 FF = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin"]
@@ -73,6 +73,14 @@ def probe(source):
     if not math.isfinite(duration) or duration <= 0:
         raise ValueError("Duração da fonte indisponível.")
     return duration, any(s["codec_type"] == "audio" for s in data["streams"])
+
+
+def media_for_seeking(source, remuxed):
+    if source.suffix.lower() not in {".ts", ".mts", ".m2ts"}:
+        return source
+    command(FF + ["-y", "-i", str(source), "-map", "0:v:0", "-map", "0:a:0?",
+                  "-c", "copy", "-movflags", "+faststart", str(remuxed)])
+    return remuxed
 
 
 def detect_facecam(source, duration):
@@ -348,12 +356,22 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 
 def render_clip(source, destination, shots, words, options, hook="", timing_words=None):
+    import wave
+
     scratch = destination.with_suffix("")
     scratch.mkdir()
+    source = media_for_seeking(source, scratch / "source.mp4")
     pieces = []
     accents = accent_shots(shots) if options.polish else {}
     inserts = pick_broll(options.broll_dir, shots, timing_words if timing_words is not None else words)
+    audio = probe(source)[1]
+    elapsed = 0.0
+    frame_counts = []
     for index, (start, end, style) in enumerate(shots):
+        frame_start = round(elapsed * 30)
+        elapsed += end - start
+        frames = max(1, round(elapsed * 30) - frame_start)
+        frame_counts.append(frames)
         name = f"p{len(pieces):03}.mp4"
         graph = layout_graph(style, options)
         layer = "[base]"
@@ -362,15 +380,14 @@ def render_clip(source, destination, shots, words, options, hook="", timing_word
             asset, at = inserts[index]
             inputs = (["-loop", "1"] if asset.suffix.lower() in {".png", ".jpg"} else
                       ["-stream_loop", "-1"]) + ["-i", str(asset)]
-            graph += (f";[1:v]trim=duration=1.15,setpts=PTS-STARTPTS+{at:.3f}/TB,"
+            graph += (";[1:v]trim=duration=1.15,setpts=PTS-STARTPTS,"
                       "scale=290:164:force_original_aspect_ratio=decrease:force_divisible_by=2,"
-                      "pad=290:164:(ow-iw)/2:(oh-ih)/2,drawbox=c=white@0.7:t=2[detail];"
+                      "pad=290:164:(ow-iw)/2:(oh-ih)/2,drawbox=c=white@0.7:t=2,format=yuva420p,"
+                      "fade=t=in:d=0.10:alpha=1,fade=t=out:st=1.02:d=0.12:alpha=1,"
+                      f"setpts=PTS+{at:.3f}/TB[detail];"
                       f"{layer}[detail]overlay=W-w-48:680:eof_action=pass:"
                       f"enable='between(t,{at:.3f},{at+1.15:.3f})'[inserted]")
             layer = "[inserted]"
-        if index in accents:
-            graph += f";{layer}fade=t=in:st=0:d=0.10:color=0x182335[accent]"
-            layer = "[accent]"
         if words or hook:
             subtitles(scratch / "legend.ass", words, start, end, style, options.look, hook, shots[0][0])
             graph += f";{layer}ass=legend.ass[out]"
@@ -378,23 +395,37 @@ def render_clip(source, destination, shots, words, options, hook="", timing_word
             graph += f";{layer}null[out]"
         command(FF + ["-y", "-threads", "2", "-ss", str(start), "-i", str(source),
                       *inputs, "-filter_complex_threads", "1", "-filter_complex", graph,
-                      "-map", "[out]", "-map", "0:a:0?", "-t", str(end - start),
-                      "-r", "30"] + encoder() + ENC + [name], cwd=scratch)
+                      "-map", "[out]", "-an", "-r", "30", "-frames:v", str(frames)]
+                + encoder() + ENC + [name], cwd=scratch)
         pieces.append(name)
     listing = scratch / "join.txt"
     listing.write_text("".join(f"file '{name}'\n" for name in pieces), encoding="ascii")
     partial = destination.with_suffix(".partial.mp4")
     join = FF + ["-y", "-f", "concat", "-safe", "1", "-i", listing.name]
-    if accents and probe(source)[1]:
-        mix_cues(scratch / "cues.wav", sum(b - a for a, b, _ in shots), accents.values())
-        join += ["-i", "cues.wav", "-filter_complex",
-                 "[0:a][1:a]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.92:level=false:latency=true[a]",
-                 "-map", "0:v:0", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k"]
+    if audio:
+        with wave.open(str(scratch / "program.wav"), "wb") as output:
+            output.setparams((2, 2, 48000, 0, "NONE", "not compressed"))
+            for start, end, seconds in audio_runs(shots, frame_counts):
+                fades = (f"apad,atrim=duration={seconds},afade=t=in:d=0.012,"
+                         f"afade=t=out:st={max(0, seconds-.012)}:d=0.012")
+                samples = command(FF + ["-ss", str(start), "-i", str(source), "-t", str(seconds),
+                                        "-vn", "-map", "0:a:0", "-af", fades, "-ac", "2", "-ar", "48000",
+                                        "-f", "s16le", "pipe:1"])
+                output.writeframesraw(samples)
+        join += ["-i", "program.wav"]
+        if accents:
+            mix_cues(scratch / "cues.wav", sum(frame_counts) / 30, accents.values())
+            join += ["-i", "cues.wav", "-filter_complex",
+                     "[1:a][2:a]amix=inputs=2:duration=first:normalize=0,"
+                     "alimiter=limit=0.92:level=false:latency=true[a]", "-map", "[a]"]
+        else:
+            join += ["-map", "1:a:0"]
+        join += ["-map", "0:v:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k"]
     else:
         join += ["-c", "copy"]
     command(join + ["-movflags", "+faststart", str(partial)], cwd=scratch)
     partial.replace(destination)
-    for name in [*pieces, "join.txt", "legend.ass", "cues.wav"]:
+    for name in [*pieces, "join.txt", "legend.ass", "cues.wav", "program.wav", "source.mp4"]:
         (scratch / name).unlink(missing_ok=True)
     scratch.rmdir()
     return {"accents": list(accents.values()), "broll": [asset.name for asset, _ in inserts.values()]}
@@ -404,7 +435,8 @@ def process(source, folder, options, log):
     from dataclasses import replace
 
     folder.mkdir(parents=True, exist_ok=True)
-    source = source.resolve()
+    original_source = source.resolve()
+    source = media_for_seeking(original_source, folder / "midia-revisao.mp4")
     total, audio = probe(source)
     log(f"Analisando {source.name} ({total / 60:.1f} min)")
     if options.auto_face and not options.face:
@@ -418,7 +450,8 @@ def process(source, folder, options, log):
         log("Exportação sem facecam: gerando uma versão de gameplay.")
     signals = inspect(source, total, audio, options.face)
     selected = plan(signals, total, options)
-    report = {"schema": 1, "source": str(source), "duration": total, "unit": "seconds",
+    report = {"schema": 1, "source": str(source), "original_source": str(original_source),
+              "duration": total, "unit": "seconds",
               "method": "manual" if options.manual else "relative_audio_and_motion",
               "facecam": options.face, "gameplay": options.game, "clips": []}
     report_path = folder / "cortes.json"
@@ -477,6 +510,13 @@ def process(source, folder, options, log):
                                     hook, timing_words=words)
             entry["variants"][style]["output"] = destination.name
             entry["variants"][style]["finishing"] = finishing
+            try:
+                from review import export_review
+                review_path = destination.with_suffix(".otio")
+                export_review(source, shots, review_path, audio)
+                entry["variants"][style]["review"] = review_path.name
+            except (ImportError, RuntimeError, OSError) as error:
+                log(f"Timeline de revisão indisponível: {error}")
             entry.setdefault("output", destination.name)
             report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
             log(f"Pronto: {destination}")

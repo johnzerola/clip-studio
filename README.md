@@ -29,7 +29,7 @@ VODs da Twitch e da Kick são baixados integralmente antes da análise. Os origi
 
 **Visual Shorts GTA** preenche a composição dividida, usa legendas curtas em caixa alta com palavra em destaque e permite um cartão nos primeiros segundos formado a partir da fala. **Clássico** mantém o quadro ajustado à faixa. O modo Shorts pode recortar laterais do jogo na tela dividida; o enquadramento só de gameplay preserva o quadro da região selecionada.
 
-**Transições e som** limita os acentos a três por clipe, separados por pelo menos 12 segundos. Em mudanças escolhidas, aplica uma entrada de 100 ms e soma um efeito sintetizado localmente ao áudio existente. **Centro do close** desloca o recorte horizontal de 0 (esquerda) a 1 (direita). Também pode ser definido por fonte com `canal | rosto | jogo | centro`.
+**Transições e som** limita os acentos a três por clipe, separados por pelo menos 12 segundos. O insert dissolve na própria camada, a câmera troca sem escurecer a tela inteira e o efeito sonoro é sintetizado localmente. O áudio permanece contínuo quando a edição muda só o enquadramento. A captura MPEG-TS é copiada para MP4 antes da busca de frames, mantendo a mídia editável como `midia-revisao.mp4`. **Centro do close** desloca o recorte horizontal de 0 (esquerda) a 1 (direita). Também pode ser definido por fonte com `canal | rosto | jogo | centro`.
 
 **B-roll local** aceita um diretório de imagens e vídeos autorizados. Nomeie um arquivo com uma palavra da fala, por exemplo `musicas.png`. Quando essa palavra é reconhecida num trecho de gameplay ou tela dividida com tempo suficiente, aparece um insert curto e sem o áudio do arquivo. É usado no máximo um insert por versão e o motor procura somente na pasta escolhida. A transcrição é processada localmente.
 
@@ -56,6 +56,8 @@ O painel chama os mesmos motores que a CLI. Um projeto de edição pode executar
 `cortes.json` versão 1 registra fonte, duração, método e tempos em segundos. Cada clipe contém `parts` com início, fim e pontuação, `removed` com os motivos da limpeza, e `variants` com enquadramentos e arquivos por estilo. Os campos `layouts` e `output` continuam representando a primeira versão. Um painel externo pode reutilizar os intervalos numa timeline ou usar `--ranges` para aplicar um plano revisado. Para o FilmCraft, a integração proposta é ler esses intervalos e aplicar os cortes numa sequência nova via CLI ou MCP; nenhum serviço externo é necessário para executar o Clip Studio.
 
 Para integrar o MakeMyClip sem transcrever nem renderizar duas vezes, o ponto de passagem sugerido é um adaptador local de `parts` e `layouts` para operações de timeline do CLI/MCP. Isso deixaria a revisão de cortes, transições e exportação editável para o MakeMyClip. Jumpcut pode servir como referência de agrupamento por palavra e Auto-Editor como comparação de silêncio em uma amostra. As opções nativas do Clip Studio já usam FFmpeg e Whisper. O adaptador externo ainda não foi implementado.
+
+Cada vídeo renderizado recebe uma timeline local **OpenTimelineIO** com cortes de vídeo e áudio. Use `review.py cortes.json --out revisao.otio` para exportar um plano manualmente. O OTIO guarda referências à mídia e indicações de enquadramento. Para rever os efeitos completos, abra também o MP4 e o JSON. Suporte à importação precisa ser conferido no editor de destino.
 
 ## Referências de desenvolvimento
 

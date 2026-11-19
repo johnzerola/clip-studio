@@ -54,6 +54,17 @@ def mix_cues(path, duration, timings):
         output.writeframes(audio.tobytes())
 
 
+def audio_runs(shots, frame_counts, fps=30):
+    runs = []
+    for (start, end, _), frames in zip(shots, frame_counts):
+        if runs and abs(runs[-1][1] - start) <= .015:
+            a, _, previous = runs.pop()
+            runs.append((a, end, previous + frames))
+        else:
+            runs.append((start, end, frames))
+    return [(a, b, frames / fps) for a, b, frames in runs]
+
+
 def pick_broll(folder, shots, words):
     if not folder:
         return {}
