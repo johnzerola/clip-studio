@@ -10,7 +10,16 @@ Painel local para selecionar candidatos de uma live da Twitch, Kick ou X, VOD p�
 4. Deixe **Buscar facecam** e **Legendas** ativados. Escolha **GTA / Reação**, **Conversa** ou **Sem limpeza**.
 5. Escolha a **Pasta de saída** e clique **Analisar e renderizar**. Os MP4 vão para **Clipes prontos** dentro da sessão. Com **Somente analisar**, essa mesma pasta guarda os planos em JSON. **Abrir resultados** abre a pasta selecionada.
 
-Até oito transmissões Twitch/Kick/X são capturadas em paralelo. **Live = 0** acompanha até encerrar ou clicar **Parar captura**. **Aguardar início** tenta a conexão durante o período escolhido se a fonte ainda estiver offline. Após capturar mídia o painel tenta se reconectar brevemente se a conexão fechar. Cada bloco de aproximadamente 2 minutos entra na fila ao ser fechado. **Capturas** guarda os blocos originais e os logs separadamente. O PC e o painel precisam continuar ligados. Análise e renderização concorrem pelos recursos do computador, então a entrega pode ficar atrás da captura. Whisper e OpenCV processam localmente.
+Até oito transmissões Twitch/Kick/X são capturadas em paralelo. **Live = 0** acompanha até encerrar ou clicar **Parar captura**. **Aguardar início** tenta a conexão durante o período escolhido se a fonte ainda estiver offline. Após capturar mídia o painel tenta se reconectar brevemente se a conexão fechar. O PC e o painel precisam continuar ligados.
+
+### Triagem ao vivo
+
+- Com **Triagem ao vivo**, o gravador fecha blocos de aproximadamente 15 s. Faster Whisper Tiny em CPU transcreve os blocos enquanto a captura continua. As palavras aparecem em trechos no log. O primeiro candidato precisa de três blocos consecutivos; a janela mantém até quatro. É transcrição por blocos, com atraso do HLS e da fila, e não palavra a palavra instantânea.
+- A nota combina atividade/movimento, densidade de fala, reações expressas e picos de chat quando disponíveis. O Ollama local pode revisar gancho, clareza, progressão e desfecho. O padrão é o modelo já instalado `qwen3:4b`. Deixe o campo vazio para usar só a heurística. Se o modelo não responder a tempo, a captura continua e a regra local decide. O texto vai somente para o Ollama no endereço local.
+- O chat público anônimo disponível é **Twitch**. Só contam horários e quantidade de mensagens; o app não salva nem envia o conteúdo do chat. Kick e X seguem com análise audiovisual e transcrição. A correlação entre chat e captura é aproximada por causa do atraso da live.
+- Com **Limpar blocos rejeitados**, cada canal mantém até quatro blocos fechados em contexto, cinco em espera, o bloco em gravação e o que estiver em análise. Se a fila encher, perde prioridade o bloco temporário mais antigo. Candidatos aprovados são copiados para um MP4 separado antes de liberar os fragmentos temporários. MP4 publicados e fontes externas nunca entram nessa limpeza. O armazenamento de candidatos aprovados fica sob controle do operador.
+- Os aprovados entram na fila de edição e ganham MP4 9:16, legendas opcionais e OTIO. A edição final usa modelo Base; oito capturas em paralelo não equivalem a oito transcrições simultâneas. Sem a triagem, a edição continua em blocos de aproximadamente dois minutos.
+- `Capturas/<fonte>/triagem.sqlite3` guarda decisões e notas. Use `decision_bank.py caminho/triagem.sqlite3` para listar, ou `--id candidato_... --retention 72 --views 1200` para registrar números medidos de um clipe aprovado. A nota é editorial e não prevê visualizações. Não há treinamento automático com o banco.
 
 Na Twitch, cole o canal ou a URL. Na Kick, cole `https://kick.com/nome-do-canal` ou o link público do VOD. Twitch e Kick usam Streamlink. No X, use `https://x.com/i/broadcasts/ID` ou o link da publicação pública que contém a transmissão ativa. A captura do X usa o extrator do yt-dlp seguido de FFmpeg. Vídeos privados, transmissões inacessíveis, Spaces só de áudio e replays do X não entram nesse fluxo; para analisar um replay, use o arquivo local.
 
@@ -55,7 +64,7 @@ O painel chama os mesmos motores que a CLI. Um projeto de edição pode executar
 
 `cortes.json` versão 1 registra fonte, duração, método e tempos em segundos. Cada clipe contém `parts` com início, fim e pontuação, `removed` com os motivos da limpeza, e `variants` com enquadramentos e arquivos por estilo. Os campos `layouts` e `output` continuam representando a primeira versão. Um painel externo pode reutilizar os intervalos numa timeline ou usar `--ranges` para aplicar um plano revisado. Para o FilmCraft, a integração proposta é ler esses intervalos e aplicar os cortes numa sequência nova via CLI ou MCP; nenhum serviço externo é necessário para executar o Clip Studio.
 
-Para integrar o MakeMyClip sem transcrever nem renderizar duas vezes, o ponto de passagem sugerido é um adaptador local de `parts` e `layouts` para operações de timeline do CLI/MCP. Isso deixaria a revisão de cortes, transições e exportação editável para o MakeMyClip. Jumpcut pode servir como referência de agrupamento por palavra e Auto-Editor como comparação de silêncio em uma amostra. As opções nativas do Clip Studio já usam FFmpeg e Whisper. O adaptador externo ainda não foi implementado.
+O adaptador `makemyclip_adapter.py clipe.mp4 --workspace pasta-nova` escreve um plano para importar o MP4 vertical no MakeMyClip. Com `--node-entry caminho/da/cli.js`, ele pode executar os comandos em uma instalação local do MakeMyClip. Esse caminho revisa o render; a montagem com cortes editáveis continua no OTIO. Jumpcut serve como referência de agrupamento por palavra e Auto-Editor como comparação de silêncio; não entram como processos obrigatórios.
 
 Cada vídeo renderizado recebe uma timeline local **OpenTimelineIO** com cortes de vídeo e áudio. Use `review.py cortes.json --out revisao.otio` para exportar um plano manualmente. O OTIO guarda referências à mídia e indicações de enquadramento. Para rever os efeitos completos, abra também o MP4 e o JSON. Suporte à importação precisa ser conferido no editor de destino.
 
@@ -77,6 +86,10 @@ Cada vídeo renderizado recebe uma timeline local **OpenTimelineIO** com cortes 
 | [Unsaid](https://github.com/Necromancervbh/unsaid) | Margem junto aos fonemas e remoção de hesitações |
 | [Twitch Portrait Clips](https://help.twitch.tv/s/article/how-to-use-clips) | Referência visual para webcam e gameplay em regiões empilhadas |
 | [yt-dlp](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) | Resolução de transmissões de vídeo públicas do X |
+| [Clipit](https://github.com/ataraxiiaa/clipit) | Buffer circular, captura desacoplada e julgamento local |
+| [LocalClip](https://github.com/MarkyADHD/LocalClip) | Triagem de fala, picos de chat e shortlist editorial |
+| [stream-clipper](https://github.com/st1fo/stream-clipper) | Limites de aceitação, múltiplas plataformas e metadados de decisão |
+| [whisper-rs](https://docs.rs/crate/whisper-rs/latest) | Alternativa Rust a comparar com Tiny/CTranslate2 em um benchmark equivalente; não instalada |
 | [Tutorial de facecam circular para OBS](https://www.youtube.com/watch?v=kxiZoEkOI6Y) | Máscara redonda de webcam sobre gameplay |
 | [Cortes do GMF](https://www.youtube.com/watch?v=xfRTVw-T5v8) e [StoryCut GTA RP](https://www.storycut.com/use-cases/gta-rp-clips) | Referências de GTA RP e estrutura curta de preparação e reação |
 | [Exemplos visuais de legenda da OpusClip](https://www.opus.pro/pt-br/tools/auto-caption-generator) | Legenda de fala em blocos curtos com destaque da palavra atual |

@@ -261,7 +261,7 @@ def stamp(seconds):
     return f"{ticks // 360000}:{ticks // 6000 % 60:02}:{ticks // 100 % 60:02}.{ticks % 100:02}"
 
 
-def transcribe(source, start, end):
+def transcribe(source, start, end, model="base"):
     import numpy as np
     from faster_whisper import WhisperModel
 
@@ -271,10 +271,11 @@ def transcribe(source, start, end):
         return []
     samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
     with MODEL_LOCK:
-        if "base" not in MODELS:
-            MODELS["base"] = WhisperModel("base", device="cpu", compute_type="int8",
-                                          download_root=str(Path(__file__).parent / "models"))
-        segments, _ = MODELS["base"].transcribe(samples, word_timestamps=True, vad_filter=True)
+        if model not in MODELS:
+            MODELS[model] = WhisperModel(model, device="cpu", compute_type="int8", cpu_threads=2,
+                                         download_root=str(Path(__file__).parent / "models"))
+        segments, _ = MODELS[model].transcribe(samples, word_timestamps=True, vad_filter=True,
+                                               beam_size=1 if model == "tiny" else 5)
         return [(start + w.start, start + w.end, w.word.strip())
                 for s in segments for w in (s.words or []) if w.word.strip()]
 
@@ -376,6 +377,10 @@ def render_clip(source, destination, shots, words, options, hook="", timing_word
         graph = layout_graph(style, options)
         layer = "[base]"
         inputs = []
+        if options.polish and style == "face" and end - start >= .9 and (index == 0 or index in accents):
+            graph += (f";{layer}fps=30,zoompan=z='1+0.045*(1-exp(-on/4))':"
+                      "x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s=720x1280:fps=30[punch]")
+            layer = "[punch]"
         if index in inserts:
             asset, at = inserts[index]
             inputs = (["-loop", "1"] if asset.suffix.lower() in {".png", ".jpg"} else
@@ -651,7 +656,8 @@ def capture_once(python, url, folder, seconds, schedule, stop, log, segment_seco
             path = folder / row[0]
             if path.exists():
                 seen.add(row[0])
-                if path.stat().st_size and float(row[2]) - float(row[1]) >= 8:
+                minimum = 2 if segment_seconds <= 30 else 8
+                if path.stat().st_size and float(row[2]) - float(row[1]) >= minimum:
                     schedule(path, folder / path.stem)
 
     host = urlparse(url).netloc.lower()

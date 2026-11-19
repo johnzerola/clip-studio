@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from engine import Options, capture, crop, fetch_vod, live_source, process
 from editorial import Cleanup
+from live_scout import LiveScout, ScoutSettings
 
 ROOT = Path(__file__).resolve().parent
 OUTPUT = ROOT / "resultados"
@@ -69,6 +70,10 @@ class Panel:
         self.auto_face = tk.BooleanVar(value=True)
         self.look = tk.StringVar(value="Shorts GTA")
         self.hook = tk.BooleanVar(value=True)
+        self.scout_live = tk.BooleanVar(value=True)
+        self.scout_model = tk.StringVar(value="qwen3:4b")
+        self.scout_threshold = tk.IntVar(value=60)
+        self.scout_cleanup = tk.BooleanVar(value=True)
         self.polish = tk.BooleanVar(value=True)
         self.broll_dir = tk.StringVar()
         self.close_focus = tk.DoubleVar(value=.5)
@@ -86,7 +91,8 @@ class Panel:
         self.saved_fields = {key: getattr(self, key) for key in (
             "preset", "style", "corner", "face", "game", "duration", "count", "minutes", "workers",
             "captions", "montage", "silence", "repeats", "fillers", "speech", "pause", "noise", "auto_face",
-            "speech_gaps", "wait_minutes", "output_dir", "look", "hook", "polish", "broll_dir", "close_focus")}
+            "speech_gaps", "wait_minutes", "output_dir", "look", "hook", "polish", "broll_dir", "close_focus",
+            "scout_live", "scout_model", "scout_threshold", "scout_cleanup")}
         source_text = ""
         try:
             saved = json.loads(PREFERENCES.read_text(encoding="utf-8"))
@@ -164,6 +170,14 @@ class Panel:
         ttk.Label(inserts, text="B-roll local (opcional)").pack(side="left")
         ttk.Entry(inserts, textvariable=self.broll_dir, width=45).pack(side="left", padx=6)
         ttk.Button(inserts, text="Escolher…", command=self.pick_broll).pack(side="left")
+        live = ttk.Frame(editorial)
+        live.grid(row=4, columnspan=5, sticky="w", pady=(4, 0))
+        ttk.Checkbutton(live, text="Triagem ao vivo", variable=self.scout_live).pack(side="left")
+        ttk.Label(live, text="Ollama").pack(side="left", padx=(12, 4))
+        ttk.Entry(live, textvariable=self.scout_model, width=15).pack(side="left")
+        ttk.Label(live, text="Nota mínima").pack(side="left", padx=(12, 4))
+        ttk.Spinbox(live, textvariable=self.scout_threshold, from_=20, to=95, width=4).pack(side="left")
+        ttk.Checkbutton(live, text="Limpar blocos rejeitados", variable=self.scout_cleanup).pack(side="left", padx=12)
         ttk.Label(frame, text="Pasta de saída").grid(row=12, column=0, sticky="w", pady=(8, 0))
         ttk.Entry(frame, textvariable=self.output_dir).grid(row=12, column=1, sticky="ew", pady=(8, 0))
         ttk.Button(frame, text="Escolher pasta…", command=self.pick_output).grid(row=12, column=2, padx=8, pady=(8, 0))
@@ -245,6 +259,8 @@ class Panel:
             else:
                 self.logs.configure(state="normal")
                 self.logs.insert("end", message + "\n")
+                if int(self.logs.index("end-1c").split(".")[0]) > 3500:
+                    self.logs.delete("1.0", "501.0")
                 self.logs.see("end")
                 self.logs.configure(state="disabled")
         self.root.after(150, self.poll)
@@ -312,6 +328,10 @@ class Panel:
                 raise ValueError("A pasta de B-roll não existe.")
             if not 0 <= focus <= 1:
                 raise ValueError("Use um centro de close de 0 a 1.")
+            scout = ScoutSettings(self.scout_live.get(), self.scout_model.get().strip(),
+                                  self.scout_threshold.get(), self.scout_cleanup.get())
+            if not 20 <= scout.threshold <= 95:
+                raise ValueError("Escolha uma nota de triagem entre 20 e 95.")
             options = Options(style, face, game, self.corner.get(), self.captions.get(),
                               self.montage.get(), duration, count, render, manual, cleanup, self.auto_face.get(),
                               LOOKS[self.look.get()], self.hook.get(), self.polish.get(), broll, focus)
@@ -330,10 +350,10 @@ class Panel:
             button.state(["disabled"])
         if lives:
             self.stop_button.state(["!disabled"])
-        threading.Thread(target=self.run, args=(sources, options, minutes, workers, output, wait_minutes),
+        threading.Thread(target=self.run, args=(sources, options, minutes, workers, output, wait_minutes, scout),
                          daemon=True).start()
 
-    def run(self, sources, options, minutes, workers, output, wait_minutes):
+    def run(self, sources, options, minutes, workers, output, wait_minutes, scout=ScoutSettings(False)):
         from dataclasses import replace
         batch = output / (datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:6])
         errors = queue.SimpleQueue()
@@ -350,15 +370,33 @@ class Panel:
             self.log(f"Sessão: {batch}")
             with (ThreadPoolExecutor(max_workers=workers) as analysis,
                   ThreadPoolExecutor(max_workers=8) as lives, ThreadPoolExecutor(max_workers=2) as downloads):
-                def schedule(path, folder, settings):
-                    analysis.submit(safely, process, path, folder, settings, self.log)
+                capacity = threading.BoundedSemaphore(max(3, workers * 3))
+
+                def schedule(path, folder, settings, bounded=False):
+                    if bounded and not capacity.acquire(blocking=False):
+                        self.log(f"Fila de render cheia. Candidato guardado em {path.parent}.")
+                        return
+                    job = analysis.submit(safely, process, path, folder, settings, self.log)
+                    if bounded:
+                        job.add_done_callback(lambda _: capacity.release())
 
                 def vod(url, folder, result, settings):
                     self.log(f"Baixando VOD: {url}")
                     schedule(fetch_vod(sys.executable, url, folder), result, settings)
 
                 def schedule_live(path, block, capture_dir, result, settings):
-                    schedule(path, result / block.relative_to(capture_dir), settings)
+                    schedule(path, result / block.relative_to(capture_dir), settings, bounded=scout.enabled)
+
+                def monitor(url, folder, callback):
+                    if not scout.enabled:
+                        capture(sys.executable, url, folder, minutes, callback, self.stop, self.log, wait_minutes)
+                        return
+                    detector = LiveScout(folder, url, scout, callback, self.log)
+                    try:
+                        capture(sys.executable, url, folder, minutes, detector.receive, self.stop,
+                                self.log, wait_minutes, segment_seconds=15)
+                    finally:
+                        detector.close()
 
                 futures = []
                 from functools import partial
@@ -377,10 +415,9 @@ class Panel:
                         if kind == "vod":
                             futures.append(downloads.submit(safely, vod, source, folder, result, settings))
                         else:
-                            futures.append(lives.submit(safely, capture, sys.executable, source, folder,
-                                                        minutes, partial(schedule_live, capture_dir=folder,
-                                                                         result=result, settings=settings),
-                                                        self.stop, self.log, wait_minutes))
+                            callback = partial(schedule_live, capture_dir=folder, result=result,
+                                               settings=replace(settings, count=1, montage=False) if scout.enabled else settings)
+                            futures.append(lives.submit(safely, monitor, source, folder, callback))
                 for future in futures:
                     future.result()
             self.log("Sessão concluída." if errors.empty() else "Sessão encerrada com erros. Consulte o registro.")
