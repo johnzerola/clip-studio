@@ -14,7 +14,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 from editorial import Cleanup, clean_ranges, refine_montage, silence_edits, speech_gap_edits, transcript_edits
 from facecam import estimate, gameplay_region
-from finishing import accent_shots, caption_groups, mix_cues, pick_broll
+from finishing import accent_shots, caption_groups, pick_broll
+from effects_bank import edge_transition, render_cues
 
 WIDTH, HEIGHT = 720, 1280
 FF = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin"]
@@ -47,6 +48,9 @@ class Options:
     jcut_ms: int = 0
     music: str = ""
     music_db: int = -25
+    transition: str = "zoom"
+    sfx: str = "auto"
+    sfx_peak: int = -8
 
 
 def command(args, **kwargs):
@@ -384,12 +388,15 @@ def render_clip(source, destination, shots, words, options, hook="", timing_word
         inputs = []
         opening_punch = index == 0 and (style == "face" or (style == "split" and hook))
         highlight_punch = index in accents and style == "face"
-        if options.polish and end - start >= .9 and (opening_punch or highlight_punch):
+        if options.polish and options.transition == "zoom" and end - start >= .9 and (opening_punch or highlight_punch):
             amount = .09 if highlight_punch else .04
             punches.append({"shot": index + 1, "zoom": 1+amount})
             graph += (f";{layer}fps=30,zoompan=z='1+{amount}*(1-exp(-on/4))':"
                       "x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s=720x1280:fps=30[punch]")
             layer = "[punch]"
+        if options.polish and options.transition == "linha" and index in accents:
+            graph += edge_transition(layer, "[transition]")
+            layer = "[transition]"
         if index in inserts:
             asset, at = inserts[index]
             inputs = (["-loop", "1"] if asset.suffix.lower() in {".png", ".jpg"} else
@@ -416,8 +423,11 @@ def render_clip(source, destination, shots, words, options, hook="", timing_word
     listing.write_text("".join(f"file '{name}'\n" for name in pieces), encoding="ascii")
     partial = destination.with_suffix(".partial.mp4")
     join = FF + ["-y", "-f", "concat", "-safe", "1", "-i", listing.name]
+    cues = [(time, options.sfx if options.sfx != "auto" else
+             {"face": "impacto", "gamecam": "radio"}.get(shots[index][2], "whoosh"))
+            for index, time in accents.items()] if options.sfx != "nenhum" else []
     jcuts, gains = [], []
-    if audio or options.music or accents:
+    if audio or options.music or cues:
         duration = sum(frame_counts) / 30
         if audio:
             jcuts, gains = program(lambda args: command(FF + args), source, shots, frame_counts,
@@ -425,11 +435,11 @@ def render_clip(source, destination, shots, words, options, hook="", timing_word
         else:
             command(FF + ["-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
                           "-t", str(duration), "program.wav"], cwd=scratch)
-        if accents:
-            mix_cues(scratch / "cues.wav", duration, accents.values())
-        if accents or options.music or options.voice_polish:
+        if cues:
+            render_cues(scratch / "cues.wav", duration, cues, options.sfx_peak)
+        if cues or options.music or options.voice_polish:
             music = str(Path(options.music).resolve()) if options.music else ""
-            make_mix(FF, command, scratch, duration, options.voice_polish, music, options.music_db, bool(accents))
+            make_mix(FF, command, scratch, duration, options.voice_polish, music, options.music_db, bool(cues))
             join += ["-i", "mix.wav", "-map", "1:a:0"]
             if options.voice_polish:
                 join += ["-af", loudness_filter(FF, scratch), "-ar", "48000"]
@@ -444,6 +454,7 @@ def render_clip(source, destination, shots, words, options, hook="", timing_word
         (scratch / name).unlink(missing_ok=True)
     scratch.rmdir()
     return {"accents": list(accents.values()), "broll": [asset.name for asset, _ in inserts.values()],
+            "transition": options.transition, "sound_cues": cues,
             "jcuts": jcuts, "punches": punches, "run_gains_db": gains, "voice_polish": options.voice_polish,
             "music": Path(options.music).name if options.music else None}
 

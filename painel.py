@@ -79,6 +79,9 @@ class Panel:
         self.jcut_ms = tk.IntVar(value=100)
         self.music = tk.StringVar()
         self.music_db = tk.IntVar(value=-25)
+        self.transition = tk.StringVar(value="zoom")
+        self.sfx = tk.StringVar(value="auto")
+        self.sfx_peak = tk.IntVar(value=-8)
         self.broll_dir = tk.StringVar()
         self.close_focus = tk.DoubleVar(value=.5)
         self.preset = tk.StringVar(value="GTA / Reação")
@@ -97,7 +100,7 @@ class Panel:
             "captions", "montage", "silence", "repeats", "fillers", "speech", "pause", "noise", "auto_face",
             "speech_gaps", "wait_minutes", "output_dir", "look", "hook", "polish", "broll_dir", "close_focus",
             "scout_live", "scout_model", "scout_threshold", "scout_cleanup",
-            "voice_polish", "jcut_ms", "music", "music_db")}
+            "voice_polish", "jcut_ms", "music", "music_db", "transition", "sfx", "sfx_peak")}
         source_text = ""
         try:
             saved = json.loads(PREFERENCES.read_text(encoding="utf-8"))
@@ -192,6 +195,16 @@ class Panel:
         ttk.Entry(sound, textvariable=self.music, width=21).pack(side="left")
         ttk.Label(sound, text="dB").pack(side="left", padx=(8, 3))
         ttk.Spinbox(sound, textvariable=self.music_db, from_=-45, to=-12, width=4).pack(side="left")
+        bank = ttk.Frame(editorial)
+        bank.grid(row=6, columnspan=5, sticky="w", pady=(4, 0))
+        ttk.Label(bank, text="Transição").pack(side="left")
+        ttk.Combobox(bank, textvariable=self.transition, values=("zoom", "linha", "corte"),
+                     state="readonly", width=9).pack(side="left", padx=4)
+        ttk.Label(bank, text="Efeito").pack(side="left", padx=(8, 0))
+        ttk.Combobox(bank, textvariable=self.sfx, values=("auto", "whoosh", "radio", "impacto", "resolucao", "nenhum"),
+                     state="readonly", width=11).pack(side="left", padx=4)
+        ttk.Label(bank, text="Pico (dBFS)").pack(side="left", padx=(8, 0))
+        ttk.Spinbox(bank, textvariable=self.sfx_peak, from_=-24, to=-3, width=4).pack(side="left", padx=4)
         ttk.Label(frame, text="Pasta de saída").grid(row=12, column=0, sticky="w", pady=(8, 0))
         ttk.Entry(frame, textvariable=self.output_dir).grid(row=12, column=1, sticky="ew", pady=(8, 0))
         ttk.Button(frame, text="Escolher pasta…", command=self.pick_output).grid(row=12, column=2, padx=8, pady=(8, 0))
@@ -358,10 +371,13 @@ class Panel:
                                   self.scout_threshold.get(), self.scout_cleanup.get())
             if not 20 <= scout.threshold <= 95:
                 raise ValueError("Escolha uma nota de triagem entre 20 e 95.")
+            if not -24 <= self.sfx_peak.get() <= -3:
+                raise ValueError("Use pico dos efeitos entre -24 e -3 dBFS.")
             options = Options(style, face, game, self.corner.get(), self.captions.get(),
                               self.montage.get(), duration, count, render, manual, cleanup, self.auto_face.get(),
                               LOOKS[self.look.get()], self.hook.get(), self.polish.get(), broll, focus,
-                              self.voice_polish.get(), jcut_ms, music, music_db)
+                              self.voice_polish.get(), jcut_ms, music, music_db,
+                              self.transition.get(), self.sfx.get(), self.sfx_peak.get())
             try:
                 self.save_preferences()
             except OSError as error:

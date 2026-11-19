@@ -23,6 +23,9 @@ def main():
     parser.add_argument("--jcut-ms", type=int, default=0)
     parser.add_argument("--music", default="")
     parser.add_argument("--music-db", type=int, default=-25)
+    parser.add_argument("--transition", choices=["corte", "linha", "zoom"], default="zoom")
+    parser.add_argument("--sfx", choices=["auto", "whoosh", "radio", "impacto", "resolucao", "nenhum"], default="auto")
+    parser.add_argument("--sfx-peak", type=int, default=-8)
     parser.add_argument("--game", default="")
     parser.add_argument("--corner", choices=["direito", "esquerdo"], default="direito")
     parser.add_argument("--duration", type=int, default=90)
@@ -51,6 +54,8 @@ def main():
         parser.error("J-cut entre 0 e 250 ms e trilha entre -45 e -12 dB.")
     if args.music and not Path(args.music).is_file():
         parser.error("A faixa musical não existe.")
+    if not -24 <= args.sfx_peak <= -3:
+        parser.error("Pico dos efeitos entre -24 e -3 dBFS.")
     try:
         crop(args.face)
         crop(args.game)
@@ -60,7 +65,8 @@ def main():
         opts = Options(args.style, args.face, args.game, args.corner, args.captions,
                        not args.contiguous, args.duration, args.count, args.render, manual, cleanup, args.auto_face,
                        args.look, args.hook, args.polish, args.broll_dir, args.close_focus,
-                       args.voice_polish, args.jcut_ms, args.music, args.music_db)
+                       args.voice_polish, args.jcut_ms, args.music, args.music_db,
+                       args.transition, args.sfx, args.sfx_peak)
         process(args.source, args.out.resolve(), opts, print)
     except (ValueError, RuntimeError, OSError) as error:
         parser.exit(1, f"{error}\n")

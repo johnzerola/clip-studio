@@ -60,6 +60,16 @@ A câmera dinâmica compara atividade da webcam, movimento da gameplay e energia
 - Os candidatos iniciais ainda são classificados por áudio/movimento. Não há leitura de chat, reconhecimento de eliminações, decisão semântica sobre relevância ou histórias que cruzem blocos da live. Repetições intencionais e reconhecimento de fala imperfeito podem afetar a edição. O relatório lista tempos e motivos da limpeza.
 - Blocos e fontes curtos podem gerar menos clipes ou vídeos mais curtos. Os tempos da live em `cortes.json` são relativos ao arquivo de cada bloco.
 
+### Banco de efeitos e transições
+
+No painel, escolha **Transição** (zoom, linha ou corte), **Efeito** e o pico em dBFS. A seleção automática usa impacto no close, rádio na facecam sobre o jogo e whoosh em uma passagem. O pico regula o som isolado antes da mixagem e do nivelamento.
+
+No terminal com o Python do projeto, use `effects_bank.py listar`, `effects_bank.py som impacto --pico -6` ou `effects_bank.py transicao dissolve`. As prévias são gravadas em `work/effect-previews`. Dissolve, slide e wipe usam duas fontes com FFmpeg xfade e estão disponíveis para prévia pela CLI/MCP. O render automático da live pode escolher corte, linha ou zoom sem mudar o tempo do áudio entre as cenas.
+
+Para usar por MCP, instale `requirements-mcp.txt` na mesma .venv e registre como servidor stdio o Python do projeto com o arquivo `effects_mcp.py` como argumento. As ferramentas disponíveis são `list_effects`, `render_sound` e `render_transition`. O MCP gera prévias dentro do projeto e não expõe uma porta de rede.
+
+Os sons incluídos são sintetizados localmente. O [Freesound](https://freesound.org/docs/api/resources_apiv2.html) é uma fonte opcional para ampliar o banco e registra a licença por arquivo. O banco atual não baixa ativos externos.
+
 ## Integração com outro painel
 
 O painel chama os mesmos motores que a CLI. Um projeto de edição pode executar a CLI em segundo plano e abrir o JSON resultante para revisão. A CLI aceita arquivo local e exige uma pasta nova por execução.

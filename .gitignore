@@ -2,6 +2,7 @@
 __pycache__/
 models/
 work/
+.codex/config.toml
 resultados/
 *.mp4
 *.ts
