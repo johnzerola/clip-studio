@@ -37,6 +37,8 @@ class Options:
     manual: tuple = ()
     cleanup: Cleanup = Cleanup()
     auto_face: bool = False
+    look: str = "classic"
+    hook: bool = False
 
 
 def command(args, **kwargs):
@@ -181,6 +183,9 @@ def layout_graph(style, options):
                 f"[play]scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=decrease:"
                 f"force_divisible_by=2,setsar=1[active];"
                 f"[blur][active]overlay=(W-w)/2:(H-h)/2{target}")
+    def fill(region, height):
+        return (crop(region) + f"scale={WIDTH}:{height}:force_original_aspect_ratio=increase:"
+                f"force_divisible_by=2,crop={WIDTH}:{height},setsar=1")
     face_fill = (crop(options.face) + f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase:"
                  f"force_divisible_by=2,crop={WIDTH}:{HEIGHT},setsar=1")
     if style == "gamecam":
@@ -192,6 +197,9 @@ def layout_graph(style, options):
         return (f"[0:v]split=2[f][g];{game_canvas('[g]', '[main]')};"
                 f"[f]{camera}[cam];[main][cam]overlay={x}:246[base]")
     if style == "split":
+        if options.look == "shorts":
+            return (f"[0:v]split=2[f][g];[f]{fill(options.face, 500)}[top];"
+                    f"[g]{fill(options.game, 780)}[bottom];[top][bottom]vstack[base]")
         return (f"[0:v]split=2[f][g];[f]{fit(options.face, WIDTH, 440)}[top];"
                 f"[g]{fit(options.game, WIDTH, 840)}[bottom];[top][bottom]vstack[base]")
     if style == "reaction":
@@ -223,7 +231,7 @@ def layouts(signals, start, end, options, words=()):
             style = "face"
         elif motion >= 1.35 and motion > max(cam, audio) * 1.25:
             style = "game"
-        elif motion >= 1.0 and cam < 1.15:
+        elif motion >= (1.18 if options.look == "shorts" else 1.0) and cam < 1.15:
             style = "gamecam"
         else:
             style = "split"
@@ -270,8 +278,27 @@ def audio_silences(source, low, high, cleanup):
     return list(silence_edits(log, low, high, cleanup.padding))
 
 
-def subtitles(path, words, start, end, style):
-    y = 495 if style == "split" else 1035
+def ass_text(value):
+    return re.sub(r"[{}\\\r\n]", "", value)
+
+
+def opening_phrase(words, start):
+    opening = [(a, b, word) for a, b, word in words if start <= a <= start + 7]
+    chosen = []
+    for _, _, word in opening:
+        cleaned = ass_text(word).strip()
+        if not cleaned:
+            continue
+        if len(" ".join([*chosen, cleaned])) > 64:
+            break
+        chosen.append(cleaned)
+        if len(chosen) >= 4 and (cleaned.endswith((".", "!", "?")) or len(chosen) == 8):
+            break
+    return " ".join(chosen).strip(" .,:;") if len(chosen) >= 4 else ""
+
+
+def subtitles(path, words, start, end, style, look="classic", hook="", opening=None):
+    y = (562 if look == "shorts" else 495) if style == "split" else 1035
     head = """[Script Info]
 ScriptType: v4.00+
 PlayResX: 720
@@ -279,11 +306,17 @@ PlayResY: 1280
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Caption,Arial,48,&H0000DEFF,&H00FFFFFF,&H00101218,&H60000000,-1,0,0,0,100,100,0,0,1,4,1,5,50,50,40,1
+Style: Hook,Arial,44,&H00FFFFFF,&H00FFFFFF,&H00131824,&H00131824,-1,0,0,0,100,100,0,0,3,11,0,5,106,106,30,1
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     words = [(max(a, start), min(b, end), word) for a, b, word in words if a < end and b > start]
     lines = []
+    if hook and opening is not None and start < opening + 2.7 and end > opening:
+        at, until = max(start, opening), min(end, opening + 2.7)
+        hook_y = 415 if style == "split" else 280
+        lines.append(f"Dialogue: 1,{stamp(at-start)},{stamp(until-start)},Hook,,0,0,0,,"
+                     + r"{\pos(360," + str(hook_y) + ")}" + ass_text(hook))
     for i in range(0, len(words), 3):
         group = words[i:i + 3]
         for j, (a, b, _) in enumerate(group):
@@ -291,22 +324,22 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             if limit <= a:
                 continue
             phrase = " ".join((r"{\1c&H00DEFF&}" if k == j else r"{\1c&HFFFFFF&}")
-                              + re.sub(r"[{}\\\r\n]", "", word)
+                              + (ass_text(word).upper() if look == "shorts" else ass_text(word))
                               for k, (_, _, word) in enumerate(group))
             lines.append(f"Dialogue: 0,{stamp(a-start)},{stamp(limit-start)},Caption,,0,0,0,,"
                          + r"{\pos(360," + str(y) + ")}" + phrase)
     path.write_text(head + "\n".join(lines) + "\n", encoding="utf-8")
 
 
-def render_clip(source, destination, shots, words, options):
+def render_clip(source, destination, shots, words, options, hook=""):
     scratch = destination.with_suffix("")
     scratch.mkdir()
     pieces = []
     for start, end, style in shots:
         name = f"p{len(pieces):03}.mp4"
         graph = layout_graph(style, options)
-        if words:
-            subtitles(scratch / "legend.ass", words, start, end, style)
+        if words or hook:
+            subtitles(scratch / "legend.ass", words, start, end, style, options.look, hook, shots[0][0])
             graph += ";[base]ass=legend.ass[out]"
         else:
             graph += ";[base]null[out]"
@@ -362,7 +395,7 @@ def process(source, folder, options, log):
             words = ([w for w in shared_words if w[0] < high and w[1] > low]
                      if shared_words is not None else [])
             if audio and shared_words is None and (cleanup.fillers or cleanup.repeats or cleanup.speech_gaps
-                                                   or (options.render and options.captions)):
+                                                   or options.hook or (options.render and options.captions)):
                 words = transcribe(source, low, high)
             edits = list(transcript_edits(words, cleanup))
             if cleanup.speech_gaps:
@@ -376,24 +409,30 @@ def process(source, folder, options, log):
         by_style = {style: [shot for low, high in kept
                             for shot in layouts(signals, low, high, replace(options, style=style), transcript)]
                     for style in styles}
+        hook = ""
+        if options.hook:
+            spoken = [word for word in transcript
+                      if any(a <= (word[0] + word[1]) / 2 < b for a, b in kept)]
+            hook = opening_phrase(spoken, kept[0][0])
         report["clips"].append({
             "parts": [dict(start=a, end=b, score=score(signals, a, b)) for a, b in kept],
             "removed": removals,
+            "hook": hook,
             "layouts": [dict(start=a, end=b, style=s) for a, b, s in by_style[styles[0]]],
             "variants": {key: {"layouts": [dict(start=a, end=b, style=s) for a, b, s in shots]}
                          for key, shots in by_style.items()}
         })
-        prepared.append((by_style, transcript if options.captions else []))
+        prepared.append((by_style, transcript if options.captions else [], hook))
     report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     log(f"{len(prepared)} corte(s) planejado(s) em {folder.name}")
     if not options.render:
         return
-    for index, (by_style, words) in enumerate(prepared, 1):
+    for index, (by_style, words, hook) in enumerate(prepared, 1):
         entry = report["clips"][index - 1]
         for style, shots in by_style.items():
             suffix = f"_{style}" if len(by_style) > 1 else ""
             destination = folder / f"clip_{index:02}{suffix}.mp4"
-            render_clip(source, destination, shots, words, options)
+            render_clip(source, destination, shots, words, options, hook)
             entry["variants"][style]["output"] = destination.name
             entry.setdefault("output", destination.name)
             report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -410,6 +449,51 @@ def twitch_source(value):
     return "https://www.twitch.tv/" + path, path.startswith("videos/")
 
 
+X_HOSTS = {"x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"}
+
+
+def live_source(value):
+    parsed = urlparse(value)
+    if parsed.netloc.lower() in X_HOSTS:
+        path = parsed.path.rstrip("/")
+        if parsed.scheme not in ("https", "http") or not re.fullmatch(
+                r"/(?:i/broadcasts/[a-zA-Z0-9]+|(?:i/web|[a-zA-Z0-9_]{1,20})/status/\d+(?:/video/\d+)?)", path):
+            raise ValueError("No X, cole o link público da transmissão ou da publicação que contém a live de vídeo.")
+        return "https://x.com" + path, False
+    return twitch_source(value)
+
+
+class BroadcastEnded(Exception):
+    """The provider confirmed the broadcast ended."""
+
+
+def x_media(python, url):
+    try:
+        raw = command([python, "-m", "yt_dlp", "--ignore-config", "--compat-options", "no-certifi",
+                       "--no-playlist", "--no-warnings",
+                       "--socket-timeout", "12", "--extractor-retries", "0", "--dump-single-json",
+                       "-f", "b[height<=720]/b", "--", url], timeout=25)
+    except RuntimeError as error:
+        if "broadcast no longer exists" in str(error).casefold():
+            raise BroadcastEnded("O X informou que esta transmissão não está mais disponível.") from error
+        raise
+    info = json.loads(raw)
+    if info.get("live_status") in {"post_live", "was_live"} or info.get("was_live"):
+        raise BroadcastEnded("O X informou que a transmissão já terminou.")
+    if not (info.get("is_live") or info.get("live_status") == "is_live"):
+        if info.get("live_status") == "is_upcoming":
+            raise RuntimeError("Transmissão do X agendada. Aguardando início.")
+        raise RuntimeError("O X ainda não retornou uma transmissão de vídeo ao vivo para este link.")
+    media = info.get("url", "")
+    if urlparse(media).scheme not in ("https", "http"):
+        raise RuntimeError("O X não retornou um endereço de mídia HTTP utilizável.")
+    headers = [f"{k}: {v}\r\n" for k, v in (info.get("http_headers") or {}).items()
+               if re.fullmatch(r"[A-Za-z0-9-]+", k) and isinstance(v, str) and not re.search(r"[\r\n]", v)]
+    return ["-rw_timeout", "20000000", "-tls_verify", "1",
+            "-protocol_whitelist", "http,https,tcp,tls,crypto",
+            *(["-headers", "".join(headers)] if headers else []), "-i", media]
+
+
 def fetch_vod(python, url, folder):
     path = folder / "vod.ts"
     command([python, "-m", "streamlink", "--loglevel", "error", "--output", str(path),
@@ -417,11 +501,50 @@ def fetch_vod(python, url, folder):
     return path
 
 
-def capture(python, url, folder, minutes, schedule, stop, log):
-    """Keep one capture connection per channel; queue only closed segments."""
+def capture(python, url, folder, minutes, schedule, stop, log, wait_minutes=0, segment_seconds=120):
+    """Wait for a live source and reconnect briefly if its transport drops."""
+    ready_by = time.monotonic() + wait_minutes * 60
+    deadline = None
+    last_media = None
+    attempt = 0
+    while not stop.is_set():
+        attempt += 1
+        target = folder / f"conexao_{attempt:03}"
+        target.mkdir()
+        started = time.monotonic()
+        seconds = (max(1, round(deadline - started)) if deadline else (minutes * 60 if minutes else None))
+        try:
+            found = capture_once(python, url, target, seconds, schedule, stop, log, segment_seconds)
+        except BroadcastEnded as error:
+            log(str(error))
+            return
+        except (RuntimeError, ValueError, OSError, sp.TimeoutExpired) as error:
+            found = False
+            with (target / "captura.log").open("a", encoding="utf-8") as diagnostics:
+                diagnostics.write(str(error) + "\n")
+        now = time.monotonic()
+        if found:
+            last_media = now
+            if minutes and deadline is None:
+                deadline = started + minutes * 60
+        if stop.is_set() or (deadline and now >= deadline - 2):
+            return
+        retry_until = last_media + 70 if last_media is not None else ready_by
+        if now >= retry_until:
+            if not found and last_media is None:
+                log(f"Nenhum vídeo ao vivo para {url}. Consulte {target / 'captura.log'}")
+            else:
+                log(f"Captura encerrada: {url}")
+            return
+        log(f"{'Reconectando' if last_media is not None else 'Aguardando live'}: {url}")
+        stop.wait(min(20, max(0, retry_until - now)))
+
+
+def capture_once(python, url, folder, seconds, schedule, stop, log, segment_seconds):
+    """Own the capture processes and send only segments closed by FFmpeg."""
     seen = set()
     index = folder / "captura.csv"
-    deadline = time.monotonic() + minutes * 60 + 40
+    deadline = time.monotonic() + seconds + 40 if seconds else float("inf")
 
     def queue_finished():
         if not index.exists():
@@ -436,31 +559,56 @@ def capture(python, url, folder, minutes, schedule, stop, log):
                 if path.stat().st_size and float(row[2]) - float(row[1]) >= 8:
                     schedule(path, folder / path.stem)
 
+    x = urlparse(url).netloc.lower() in X_HOSTS
+    input_args = x_media(python, url) if x else ["-i", "pipe:0"]
+    if stop.is_set():
+        return False
     with (folder / "captura.log").open("wb") as errors:
-        sl = sp.Popen([python, "-m", "streamlink", "--stdout", "--twitch-low-latency",
-                       "--loglevel", "warning", url, "480p,360p,best"], stdout=sp.PIPE, stderr=errors)
+        sl = None if x else sp.Popen([python, "-m", "streamlink", "--stdout", "--twitch-low-latency",
+                                      "--loglevel", "warning", url, "480p,360p,best"],
+                                     stdout=sp.PIPE, stderr=errors)
         ff = None
         try:
-            ff = sp.Popen(FF + ["-i", "pipe:0", "-map", "0:v:0", "-map", "0:a:0?",
-                                "-t", str(minutes * 60), "-c", "copy", "-f", "segment",
-                                "-segment_time", "180", "-reset_timestamps", "1",
+            ff = sp.Popen((FF[:-1] if x else FF) + input_args + ["-map", "0:v:0", "-map", "0:a:0?"]
+                          + (["-t", str(seconds)] if seconds else [])
+                          + ["-c", "copy", "-f", "segment",
+                                "-segment_time", str(segment_seconds), "-reset_timestamps", "1",
                                 "-segment_list", index.name, "-segment_list_type", "csv",
-                                "live_%04d.ts"], stdin=sl.stdout, cwd=folder, stderr=errors)
-            sl.stdout.close()
+                                "live_%04d.ts"], stdin=sp.PIPE if x else sl.stdout, cwd=folder, stderr=errors)
+            if sl is not None:
+                sl.stdout.close()
             log(f"Capturando {url}")
+            last_data = time.monotonic()
+            signature = None
             while ff.poll() is None and not stop.wait(2) and time.monotonic() < deadline:
                 queue_finished()
+                segment = max(folder.glob("live_*.ts"), default=None)
+                if segment is not None:
+                    current = (segment.name, segment.stat().st_size)
+                    if current != signature:
+                        last_data, signature = time.monotonic(), current
+                if time.monotonic() - last_data > 65:
+                    log(f"Sem dados de vídeo na conexão: {url}")
+                    break
         finally:
-            sl.stdout.close()
-            if sl.poll() is None:
-                sl.terminate()
-            sl.wait()
+            if sl is not None:
+                sl.stdout.close()
+                if sl.poll() is None:
+                    sl.terminate()
+                sl.wait()
             if ff is not None:
+                if x and ff.poll() is None:
+                    try:
+                        ff.stdin.write(b"q\n")
+                        ff.stdin.flush()
+                    except OSError:
+                        pass
                 try:
                     ff.wait(timeout=12)
                 except sp.TimeoutExpired:
                     ff.kill()
                     ff.wait()
+                if ff.stdin is not None:
+                    ff.stdin.close()
     queue_finished()
-    if not seen:
-        log(f"Nenhum bloco capturado de {url}. Consulte {folder / 'captura.log'}")
+    return bool(seen)

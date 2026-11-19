@@ -1,16 +1,18 @@
 # Clip Studio
 
-Painel local para selecionar candidatos de uma live da Twitch, VOD público ou vídeo do disco, editar por atividade audiovisual e transcrição e gerar clipes verticais MP4.
+Painel local para selecionar candidatos de uma live de vídeo da Twitch ou do X, VOD público da Twitch ou arquivo do disco, editar por atividade audiovisual e transcrição e gerar clipes verticais MP4.
 
 ## Windows
 
 1. Tenha Python 3.13 e FFmpeg com FFprobe no PATH. O FFmpeg precisa de libx264 ou libopenh264 e do filtro ASS para legendas.
 2. Extraia o ZIP e abra **Instalar.cmd** uma vez.
-3. Abra **Iniciar.cmd**. Adicione os canais, URLs de VOD ou arquivos, um por linha.
+3. Abra **Iniciar.cmd**. Adicione canais da Twitch, links de transmissões públicas do X, URLs de VOD da Twitch ou arquivos, um por linha.
 4. Deixe **Buscar facecam** e **Legendas** ativados. Escolha **GTA / Reação**, **Conversa** ou **Sem limpeza**.
-5. Use **Somente analisar** para gerar o plano em JSON, ou **Analisar e renderizar** para gerar os MP4. Abra a pasta pelo botão **Abrir resultados**.
+5. Escolha a **Pasta de saída** e clique **Analisar e renderizar**. Os MP4 vão para **Clipes prontos** dentro da sessão. Com **Somente analisar**, essa mesma pasta guarda os planos em JSON. **Abrir resultados** abre a pasta selecionada.
 
-Até oito canais Twitch são capturados em paralelo. O padrão é 30 minutos por live, com blocos de cerca de 3 minutos. Cada bloco fechado entra na fila de análise enquanto a live segue. A fila limita o número de trabalhos de análise e render ativos. As legendas usam Faster Whisper local, modelo base CPU/int8 e download inicial automático. Para testar a edição sem esse download, desmarque **Legendas**.
+Até oito transmissões Twitch/X são capturadas em paralelo. **Live = 0** acompanha até encerrar ou clicar **Parar captura**. **Aguardar início** tenta a conexão durante o período escolhido se a fonte ainda estiver offline. Após capturar mídia o painel tenta se reconectar brevemente se a conexão fechar. Cada bloco de aproximadamente 2 minutos entra na fila ao ser fechado. **Capturas** guarda os blocos originais e os logs separadamente. O PC e o painel precisam continuar ligados. Análise e renderização concorrem pelos recursos do computador, então a entrega pode ficar atrás da captura. Whisper e OpenCV processam localmente.
+
+Na Twitch, cole o canal ou a URL. No X, use `https://x.com/i/broadcasts/ID` ou o link da publicação pública que contém a transmissão ativa. A captura usa o extrator oficial do yt-dlp seguido de FFmpeg. Vídeos privados, transmissões inacessíveis, Spaces só de áudio e replays do X não entram nesse fluxo; para analisar um replay, use o arquivo local.
 
 VODs Twitch são baixados integralmente antes da análise. Os originais baixados e os blocos de live ficam na pasta de resultados para permitir revisão. A velocidade da captura ao vivo acompanha a transmissão. A análise de gravações usa miniaturas de 32 × 18 a cada dois segundos e uma faixa de áudio reduzida, embora ainda precise decodificar a fonte. O projeto não mede ganho de tempo em oito canais reais.
 
@@ -24,6 +26,8 @@ VODs Twitch são baixados integralmente antes da análise. Os originais baixados
 | Jogo em tela + facecam redonda | Gameplay em destaque sobre fundo desfocado, com rosto redondo à esquerda ou à direita | Abaixo |
 
 **Exportar os três estilos** renderiza a mesma timeline em Dinâmico, Dividido e Reação. O layout redondo entra como recurso do Dinâmico ou pode ser escolhido sozinho. Áudio e transcrição são analisados uma vez por montagem.
+
+**Visual Shorts GTA** preenche a composição dividida, usa legendas curtas em caixa alta com palavra em destaque e permite um cartão nos primeiros segundos formado a partir da fala. **Clássico** mantém o quadro ajustado à faixa. O modo Shorts pode recortar laterais do jogo na tela dividida; o enquadramento só de gameplay preserva o quadro da região selecionada.
 
 **Buscar facecam** usa OpenCV local para procurar um rosto frontal pequeno e estável nos cantos, por amostragem. Se o detector não encontrar uma facecam plausível, exporta gameplay. O recorte manual tem prioridade e usa `x,y,largura,altura` normalizados, como `0.75,0.72,0.24,0.25`. Defina recortes diferentes por fonte com `canal | recorte_face | recorte_jogo`. Quando possível, um recorte lateral evita duplicar a webcam embutida na captura. Isso descarta parte da borda; uma fonte única não tem os pixels do jogo encobertos pela câmera. O recorte de jogo manual tem prioridade.
 
@@ -64,6 +68,7 @@ O painel chama os mesmos motores que a CLI. Um projeto de edição pode executar
 | [Jumpcut](https://github.com/Kawwshall/jumpcut) | Uma transcrição com tempo por palavra alimenta limpeza e legenda |
 | [Unsaid](https://github.com/Necromancervbh/unsaid) | Margem junto aos fonemas e remoção de hesitações |
 | [Twitch Portrait Clips](https://help.twitch.tv/s/article/how-to-use-clips) | Referência visual para webcam e gameplay em regiões empilhadas |
+| [yt-dlp](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) | Resolução de transmissões de vídeo públicas do X |
 | [Tutorial de facecam circular para OBS](https://www.youtube.com/watch?v=kxiZoEkOI6Y) | Máscara redonda de webcam sobre gameplay |
 | [Cortes do GMF](https://www.youtube.com/watch?v=xfRTVw-T5v8) e [StoryCut GTA RP](https://www.storycut.com/use-cases/gta-rp-clips) | Referências de GTA RP e estrutura curta de preparação e reação |
 | [Exemplos visuais de legenda da OpusClip](https://www.opus.pro/pt-br/tools/auto-caption-generator) | Legenda de fala em blocos curtos com destaque da palavra atual |

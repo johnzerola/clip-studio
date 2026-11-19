@@ -14,6 +14,8 @@ def main():
     parser.add_argument("--style", choices=["dynamic", "split", "reaction", "gamecam", "all"], default="dynamic")
     parser.add_argument("--face", default="")
     parser.add_argument("--auto-face", action="store_true")
+    parser.add_argument("--look", choices=["classic", "shorts"], default="classic")
+    parser.add_argument("--hook", action="store_true")
     parser.add_argument("--game", default="")
     parser.add_argument("--corner", choices=["direito", "esquerdo"], default="direito")
     parser.add_argument("--duration", type=int, default=90)
@@ -43,7 +45,8 @@ def main():
         cleanup = Cleanup(args.cut_silence, args.cut_repeats, args.cut_fillers, args.link_speech,
                           args.min_pause, args.silence_db, speech_gaps=args.cut_speech_gaps)
         opts = Options(args.style, args.face, args.game, args.corner, args.captions,
-                       not args.contiguous, args.duration, args.count, args.render, manual, cleanup, args.auto_face)
+                       not args.contiguous, args.duration, args.count, args.render, manual, cleanup, args.auto_face,
+                       args.look, args.hook)
         process(args.source, args.out.resolve(), opts, print)
     except (ValueError, RuntimeError, OSError) as error:
         parser.exit(1, f"{error}\n")
