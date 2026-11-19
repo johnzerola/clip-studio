@@ -89,12 +89,13 @@ class TwitchPulse:
         return now, round(min(5., ratio), 2)
 
 
-def initial_score(words, motion, chat_count, chat_ratio, seconds):
+def initial_score(words, motion, chat_count, chat_ratio, seconds, peak_db=0.):
     text = " ".join(word for _, _, word in words).casefold()
     density = min(1., len(words) / max(seconds * 1.6, 1))
     reactions = len(re.findall(r"[!?]|\b(?:eita|nossa|caramba|olha|agora|mano|wow|wait|clutch)\b", text))
     variety = len(set(re.findall(r"\w+", text))) / max(1, len(words))
     score = 20 + 22*density + 12*min(1, variety) + min(12, 2*reactions) + 14*min(1, motion/2)
+    score += min(8, max(0, peak_db-3)*.8)
     if chat_count >= 6:
         score += min(20, max(0, chat_ratio-1)*7)
     return round(min(100., score))
@@ -204,9 +205,10 @@ class LiveScout:
             words = transcribe(path, 0, seconds, model="tiny") if audio else []
             features = inspect(path, seconds, audio)
         motion = max((row[1] for row in features), default=0)
+        peak_db = 20*math.log10(max(1., max((row[0] for row in features), default=1.)))
         if len(self.entries) == self.entries.maxlen:
             self.release(self.entries.popleft()[0])
-        self.entries.append((path, seconds, words, motion))
+        self.entries.append((path, seconds, words, motion, peak_db))
         excerpt = " ".join(w for _, _, w in words)
         self.log(f"Fala {path.stem}: {excerpt[:120] or 'sem fala reconhecida'}")
         if len(self.entries) < 3 or arrival - self.last_clip < 90:
@@ -215,7 +217,8 @@ class LiveScout:
         duration = sum(item[1] for item in window)
         count, ratio = self.chat.measure(arrival, duration) if self.chat else (0, 0.)
         all_words = [word for item in window for word in item[2]]
-        score = initial_score(all_words, max(item[3] for item in window), count, ratio, duration)
+        audio_peak = max(item[4] for item in window)
+        score = initial_score(all_words, max(item[3] for item in window), count, ratio, duration, audio_peak)
         verdict = None
         if (self.settings.model and score >= self.settings.threshold - 12
                 and arrival - self.last_judge >= 30):
@@ -226,7 +229,8 @@ class LiveScout:
         from uuid import uuid4
         key = f"candidato_{time.strftime('%H%M%S')}_{uuid4().hex[:6]}"
         result = {"id": key, "raw_score": score, "score": combined, "accepted": accepted, "chat_messages": count,
-                  "chat_ratio": ratio, "model": self.settings.model if verdict else None}
+                  "chat_ratio": ratio, "audio_peak_db_above_local_median": round(audio_peak, 2),
+                  "model": self.settings.model if verdict else None}
         if verdict:
             result["judge"] = verdict
         logfile = self.root / "triagem.jsonl"

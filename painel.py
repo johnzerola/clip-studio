@@ -75,6 +75,10 @@ class Panel:
         self.scout_threshold = tk.IntVar(value=60)
         self.scout_cleanup = tk.BooleanVar(value=True)
         self.polish = tk.BooleanVar(value=True)
+        self.voice_polish = tk.BooleanVar(value=True)
+        self.jcut_ms = tk.IntVar(value=100)
+        self.music = tk.StringVar()
+        self.music_db = tk.IntVar(value=-25)
         self.broll_dir = tk.StringVar()
         self.close_focus = tk.DoubleVar(value=.5)
         self.preset = tk.StringVar(value="GTA / Reação")
@@ -92,7 +96,8 @@ class Panel:
             "preset", "style", "corner", "face", "game", "duration", "count", "minutes", "workers",
             "captions", "montage", "silence", "repeats", "fillers", "speech", "pause", "noise", "auto_face",
             "speech_gaps", "wait_minutes", "output_dir", "look", "hook", "polish", "broll_dir", "close_focus",
-            "scout_live", "scout_model", "scout_threshold", "scout_cleanup")}
+            "scout_live", "scout_model", "scout_threshold", "scout_cleanup",
+            "voice_polish", "jcut_ms", "music", "music_db")}
         source_text = ""
         try:
             saved = json.loads(PREFERENCES.read_text(encoding="utf-8"))
@@ -178,6 +183,15 @@ class Panel:
         ttk.Label(live, text="Nota mínima").pack(side="left", padx=(12, 4))
         ttk.Spinbox(live, textvariable=self.scout_threshold, from_=20, to=95, width=4).pack(side="left")
         ttk.Checkbutton(live, text="Limpar blocos rejeitados", variable=self.scout_cleanup).pack(side="left", padx=12)
+        sound = ttk.Frame(editorial)
+        sound.grid(row=5, columnspan=5, sticky="w", pady=(4, 0))
+        ttk.Checkbutton(sound, text="Tratar e nivelar áudio", variable=self.voice_polish).pack(side="left")
+        ttk.Label(sound, text="J-cut (ms)").pack(side="left", padx=(10, 3))
+        ttk.Spinbox(sound, textvariable=self.jcut_ms, from_=0, to=250, increment=10, width=4).pack(side="left")
+        ttk.Button(sound, text="Trilha…", command=self.pick_music).pack(side="left", padx=(9, 4))
+        ttk.Entry(sound, textvariable=self.music, width=21).pack(side="left")
+        ttk.Label(sound, text="dB").pack(side="left", padx=(8, 3))
+        ttk.Spinbox(sound, textvariable=self.music_db, from_=-45, to=-12, width=4).pack(side="left")
         ttk.Label(frame, text="Pasta de saída").grid(row=12, column=0, sticky="w", pady=(8, 0))
         ttk.Entry(frame, textvariable=self.output_dir).grid(row=12, column=1, sticky="ew", pady=(8, 0))
         ttk.Button(frame, text="Escolher pasta…", command=self.pick_output).grid(row=12, column=2, padx=8, pady=(8, 0))
@@ -227,6 +241,12 @@ class Panel:
         folder = filedialog.askdirectory(initialdir=self.broll_dir.get() or str(ROOT))
         if folder:
             self.broll_dir.set(folder)
+
+    def pick_music(self):
+        path = filedialog.askopenfilename(filetypes=[("Áudio", "*.wav *.mp3 *.m4a *.flac *.ogg *.aac"),
+                                                     ("Todos", "*.*")])
+        if path:
+            self.music.set(path)
 
     def output_path(self):
         value = self.output_dir.get().strip().strip('"')
@@ -328,13 +348,20 @@ class Panel:
                 raise ValueError("A pasta de B-roll não existe.")
             if not 0 <= focus <= 1:
                 raise ValueError("Use um centro de close de 0 a 1.")
+            music = self.music.get().strip()
+            jcut_ms, music_db = self.jcut_ms.get(), self.music_db.get()
+            if music and not Path(music).is_file():
+                raise ValueError("Escolha um arquivo de trilha existente.")
+            if not (0 <= jcut_ms <= 250 and -45 <= music_db <= -12):
+                raise ValueError("Use J-cut entre 0 e 250 ms e trilha entre -45 e -12 dB.")
             scout = ScoutSettings(self.scout_live.get(), self.scout_model.get().strip(),
                                   self.scout_threshold.get(), self.scout_cleanup.get())
             if not 20 <= scout.threshold <= 95:
                 raise ValueError("Escolha uma nota de triagem entre 20 e 95.")
             options = Options(style, face, game, self.corner.get(), self.captions.get(),
                               self.montage.get(), duration, count, render, manual, cleanup, self.auto_face.get(),
-                              LOOKS[self.look.get()], self.hook.get(), self.polish.get(), broll, focus)
+                              LOOKS[self.look.get()], self.hook.get(), self.polish.get(), broll, focus,
+                              self.voice_polish.get(), jcut_ms, music, music_db)
             try:
                 self.save_preferences()
             except OSError as error:

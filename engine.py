@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from editorial import Cleanup, clean_ranges, refine_montage, silence_edits, speech_gap_edits, transcript_edits
 from facecam import estimate, gameplay_region
-from finishing import accent_shots, audio_runs, caption_groups, mix_cues, pick_broll
+from finishing import accent_shots, caption_groups, mix_cues, pick_broll
 
 WIDTH, HEIGHT = 720, 1280
 FF = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin"]
@@ -43,6 +43,10 @@ class Options:
     polish: bool = False
     broll_dir: str = ""
     close_focus: float = 0.5
+    voice_polish: bool = False
+    jcut_ms: int = 0
+    music: str = ""
+    music_db: int = -25
 
 
 def command(args, **kwargs):
@@ -357,7 +361,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 
 def render_clip(source, destination, shots, words, options, hook="", timing_words=None):
-    import wave
+    from audio_finish import loudness_filter, make_mix, program
 
     scratch = destination.with_suffix("")
     scratch.mkdir()
@@ -368,6 +372,7 @@ def render_clip(source, destination, shots, words, options, hook="", timing_word
     audio = probe(source)[1]
     elapsed = 0.0
     frame_counts = []
+    punches = []
     for index, (start, end, style) in enumerate(shots):
         frame_start = round(elapsed * 30)
         elapsed += end - start
@@ -377,8 +382,12 @@ def render_clip(source, destination, shots, words, options, hook="", timing_word
         graph = layout_graph(style, options)
         layer = "[base]"
         inputs = []
-        if options.polish and style == "face" and end - start >= .9 and (index == 0 or index in accents):
-            graph += (f";{layer}fps=30,zoompan=z='1+0.045*(1-exp(-on/4))':"
+        opening_punch = index == 0 and (style == "face" or (style == "split" and hook))
+        highlight_punch = index in accents and style == "face"
+        if options.polish and end - start >= .9 and (opening_punch or highlight_punch):
+            amount = .09 if highlight_punch else .04
+            punches.append({"shot": index + 1, "zoom": 1+amount})
+            graph += (f";{layer}fps=30,zoompan=z='1+{amount}*(1-exp(-on/4))':"
                       "x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s=720x1280:fps=30[punch]")
             layer = "[punch]"
         if index in inserts:
@@ -407,33 +416,36 @@ def render_clip(source, destination, shots, words, options, hook="", timing_word
     listing.write_text("".join(f"file '{name}'\n" for name in pieces), encoding="ascii")
     partial = destination.with_suffix(".partial.mp4")
     join = FF + ["-y", "-f", "concat", "-safe", "1", "-i", listing.name]
-    if audio:
-        with wave.open(str(scratch / "program.wav"), "wb") as output:
-            output.setparams((2, 2, 48000, 0, "NONE", "not compressed"))
-            for start, end, seconds in audio_runs(shots, frame_counts):
-                fades = (f"apad,atrim=duration={seconds},afade=t=in:d=0.012,"
-                         f"afade=t=out:st={max(0, seconds-.012)}:d=0.012")
-                samples = command(FF + ["-ss", str(start), "-i", str(source), "-t", str(seconds),
-                                        "-vn", "-map", "0:a:0", "-af", fades, "-ac", "2", "-ar", "48000",
-                                        "-f", "s16le", "pipe:1"])
-                output.writeframesraw(samples)
-        join += ["-i", "program.wav"]
-        if accents:
-            mix_cues(scratch / "cues.wav", sum(frame_counts) / 30, accents.values())
-            join += ["-i", "cues.wav", "-filter_complex",
-                     "[1:a][2:a]amix=inputs=2:duration=first:normalize=0,"
-                     "alimiter=limit=0.92:level=false:latency=true[a]", "-map", "[a]"]
+    jcuts, gains = [], []
+    if audio or options.music or accents:
+        duration = sum(frame_counts) / 30
+        if audio:
+            jcuts, gains = program(lambda args: command(FF + args), source, shots, frame_counts,
+                                   scratch / "program.wav", options.jcut_ms, options.voice_polish)
         else:
-            join += ["-map", "1:a:0"]
+            command(FF + ["-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+                          "-t", str(duration), "program.wav"], cwd=scratch)
+        if accents:
+            mix_cues(scratch / "cues.wav", duration, accents.values())
+        if accents or options.music or options.voice_polish:
+            music = str(Path(options.music).resolve()) if options.music else ""
+            make_mix(FF, command, scratch, duration, options.voice_polish, music, options.music_db, bool(accents))
+            join += ["-i", "mix.wav", "-map", "1:a:0"]
+            if options.voice_polish:
+                join += ["-af", loudness_filter(FF, scratch), "-ar", "48000"]
+        else:
+            join += ["-i", "program.wav", "-map", "1:a:0"]
         join += ["-map", "0:v:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k"]
     else:
         join += ["-c", "copy"]
     command(join + ["-movflags", "+faststart", str(partial)], cwd=scratch)
     partial.replace(destination)
-    for name in [*pieces, "join.txt", "legend.ass", "cues.wav", "program.wav", "source.mp4"]:
+    for name in [*pieces, "join.txt", "legend.ass", "cues.wav", "program.wav", "mix.wav", "source.mp4"]:
         (scratch / name).unlink(missing_ok=True)
     scratch.rmdir()
-    return {"accents": list(accents.values()), "broll": [asset.name for asset, _ in inserts.values()]}
+    return {"accents": list(accents.values()), "broll": [asset.name for asset, _ in inserts.values()],
+            "jcuts": jcuts, "punches": punches, "run_gains_db": gains, "voice_polish": options.voice_polish,
+            "music": Path(options.music).name if options.music else None}
 
 
 def process(source, folder, options, log):

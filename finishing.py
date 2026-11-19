@@ -25,16 +25,20 @@ def caption_groups(words):
 
 
 def accent_shots(shots):
-    selected, previous = {}, -12.0
+    candidates = []
     elapsed = 0.0
     for index, (start, end, style) in enumerate(shots):
-        if (index and elapsed >= 3 and elapsed - previous >= 12 and end - start >= .85
-                and style != shots[index - 1][2] and style in {"face", "game", "gamecam"}
-                and len(selected) < 3):
-            selected[index] = elapsed
-            previous = elapsed
+        if (index and elapsed >= 3 and end - start >= .85 and style != shots[index - 1][2]
+                and style in {"face", "game", "gamecam"}):
+            candidates.append((style != "face", elapsed, index))
         elapsed += end - start
-    return selected
+    selected = {}
+    for _, position, index in sorted(candidates):
+        if all(abs(position - prior) >= 12 for prior in selected.values()):
+            selected[index] = position
+            if len(selected) == 3:
+                break
+    return dict(sorted(selected.items()))
 
 
 def mix_cues(path, duration, timings):
