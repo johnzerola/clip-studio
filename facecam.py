@@ -15,7 +15,9 @@ def estimate(frames, width, height):
         gray = np.frombuffer(frame, dtype=np.uint8).reshape(height, width)
         for x, y, w, h in detector.detectMultiScale(gray, 1.12, 5, minSize=(20, 20)):
             cx, cy, fw, fh = (x + w / 2) / width, (y + h / 2) / height, w / width, h / height
-            if not ((cx < .34 or cx > .66) and (cy < .38 or cy > .62) and fw <= .19):
+            on_edge = cx < .24 or cx > .76
+            in_corner = (cx < .34 or cx > .66) and (cy < .38 or cy > .62)
+            if not ((on_edge or in_corner) and fw <= .19):
                 continue
             hit = (cx, cy, fw, fh)
             for group in clusters:

@@ -1,20 +1,20 @@
 # Clip Studio
 
-Painel local para selecionar candidatos de uma live de vídeo da Twitch ou do X, VOD público da Twitch ou arquivo do disco, editar por atividade audiovisual e transcrição e gerar clipes verticais MP4.
+Painel local para selecionar candidatos de uma live da Twitch, Kick ou X, VOD público da Twitch ou Kick ou arquivo do disco, editar por atividade audiovisual e transcrição e gerar clipes verticais MP4.
 
 ## Windows
 
 1. Tenha Python 3.13 e FFmpeg com FFprobe no PATH. O FFmpeg precisa de libx264 ou libopenh264 e do filtro ASS para legendas.
 2. Extraia o ZIP e abra **Instalar.cmd** uma vez.
-3. Abra **Iniciar.cmd**. Adicione canais da Twitch, links de transmissões públicas do X, URLs de VOD da Twitch ou arquivos, um por linha.
+3. Abra **Iniciar.cmd**. Adicione canais da Twitch/Kick, links de transmissões públicas do X, URLs de VOD da Twitch/Kick ou arquivos, um por linha.
 4. Deixe **Buscar facecam** e **Legendas** ativados. Escolha **GTA / Reação**, **Conversa** ou **Sem limpeza**.
 5. Escolha a **Pasta de saída** e clique **Analisar e renderizar**. Os MP4 vão para **Clipes prontos** dentro da sessão. Com **Somente analisar**, essa mesma pasta guarda os planos em JSON. **Abrir resultados** abre a pasta selecionada.
 
-Até oito transmissões Twitch/X são capturadas em paralelo. **Live = 0** acompanha até encerrar ou clicar **Parar captura**. **Aguardar início** tenta a conexão durante o período escolhido se a fonte ainda estiver offline. Após capturar mídia o painel tenta se reconectar brevemente se a conexão fechar. Cada bloco de aproximadamente 2 minutos entra na fila ao ser fechado. **Capturas** guarda os blocos originais e os logs separadamente. O PC e o painel precisam continuar ligados. Análise e renderização concorrem pelos recursos do computador, então a entrega pode ficar atrás da captura. Whisper e OpenCV processam localmente.
+Até oito transmissões Twitch/Kick/X são capturadas em paralelo. **Live = 0** acompanha até encerrar ou clicar **Parar captura**. **Aguardar início** tenta a conexão durante o período escolhido se a fonte ainda estiver offline. Após capturar mídia o painel tenta se reconectar brevemente se a conexão fechar. Cada bloco de aproximadamente 2 minutos entra na fila ao ser fechado. **Capturas** guarda os blocos originais e os logs separadamente. O PC e o painel precisam continuar ligados. Análise e renderização concorrem pelos recursos do computador, então a entrega pode ficar atrás da captura. Whisper e OpenCV processam localmente.
 
-Na Twitch, cole o canal ou a URL. No X, use `https://x.com/i/broadcasts/ID` ou o link da publicação pública que contém a transmissão ativa. A captura usa o extrator oficial do yt-dlp seguido de FFmpeg. Vídeos privados, transmissões inacessíveis, Spaces só de áudio e replays do X não entram nesse fluxo; para analisar um replay, use o arquivo local.
+Na Twitch, cole o canal ou a URL. Na Kick, cole `https://kick.com/nome-do-canal` ou o link público do VOD. Twitch e Kick usam Streamlink. No X, use `https://x.com/i/broadcasts/ID` ou o link da publicação pública que contém a transmissão ativa. A captura do X usa o extrator do yt-dlp seguido de FFmpeg. Vídeos privados, transmissões inacessíveis, Spaces só de áudio e replays do X não entram nesse fluxo; para analisar um replay, use o arquivo local.
 
-VODs Twitch são baixados integralmente antes da análise. Os originais baixados e os blocos de live ficam na pasta de resultados para permitir revisão. A velocidade da captura ao vivo acompanha a transmissão. A análise de gravações usa miniaturas de 32 × 18 a cada dois segundos e uma faixa de áudio reduzida, embora ainda precise decodificar a fonte. O projeto não mede ganho de tempo em oito canais reais.
+VODs da Twitch e da Kick são baixados integralmente antes da análise. Os originais baixados e os blocos de live ficam na pasta de resultados para permitir revisão. A velocidade da captura ao vivo acompanha a transmissão. A análise de gravações usa miniaturas de 64 × 36 a cada dois segundos e uma faixa de áudio reduzida, embora ainda precise decodificar a fonte. O projeto não mede ganho de tempo em oito canais reais.
 
 ## Três estilos
 
@@ -29,7 +29,7 @@ VODs Twitch são baixados integralmente antes da análise. Os originais baixados
 
 **Visual Shorts GTA** preenche a composição dividida, usa legendas curtas em caixa alta com palavra em destaque e permite um cartão nos primeiros segundos formado a partir da fala. **Clássico** mantém o quadro ajustado à faixa. O modo Shorts pode recortar laterais do jogo na tela dividida; o enquadramento só de gameplay preserva o quadro da região selecionada.
 
-**Buscar facecam** usa OpenCV local para procurar um rosto frontal pequeno e estável nos cantos, por amostragem. Se o detector não encontrar uma facecam plausível, exporta gameplay. O recorte manual tem prioridade e usa `x,y,largura,altura` normalizados, como `0.75,0.72,0.24,0.25`. Defina recortes diferentes por fonte com `canal | recorte_face | recorte_jogo`. Quando possível, um recorte lateral evita duplicar a webcam embutida na captura. Isso descarta parte da borda; uma fonte única não tem os pixels do jogo encobertos pela câmera. O recorte de jogo manual tem prioridade.
+**Buscar facecam** usa OpenCV local para procurar um rosto frontal pequeno e estável nos cantos e nas laterais, por amostragem. Se o detector não encontrar uma facecam plausível, exporta gameplay. O recorte manual tem prioridade e usa `x,y,largura,altura` normalizados, como `0.75,0.72,0.24,0.25`. Defina recortes diferentes por fonte com `canal | recorte_face | recorte_jogo`. Quando possível, um recorte lateral evita duplicar a webcam embutida na captura. Isso descarta parte da borda; uma fonte única não tem os pixels do jogo encobertos pela câmera. O recorte de jogo manual tem prioridade.
 
 A câmera dinâmica compara atividade da webcam, movimento da gameplay e energia do áudio, com pistas de reação da transcrição. A troca é por blocos curtos e funde blocos vizinhos iguais. O sistema não distingue com precisão quem está falando no áudio misturado, nem identifica a história do jogo ou um momento tenso pela semântica.
 

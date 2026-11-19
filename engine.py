@@ -454,10 +454,17 @@ def twitch_source(value):
 
 
 X_HOSTS = {"x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"}
+KICK_HOSTS = {"kick.com", "www.kick.com"}
 
 
 def live_source(value):
-    parsed = urlparse(value)
+    parsed = urlparse(value if "://" in value or "/" not in value else f"https://{value}")
+    if parsed.netloc.lower() in KICK_HOSTS:
+        path = parsed.path.strip("/")
+        match = re.fullmatch(r"([A-Za-z0-9_-]{1,48})(?:/videos/([a-fA-F0-9-]{36}))?", path)
+        if parsed.scheme not in ("https", "http") or match is None:
+            raise ValueError("Na Kick, cole o link do canal ou de um VOD público.")
+        return "https://kick.com/" + path.lower(), bool(match[2])
     if parsed.netloc.lower() in X_HOSTS:
         path = parsed.path.rstrip("/")
         if parsed.scheme not in ("https", "http") or not re.fullmatch(
@@ -498,9 +505,14 @@ def x_media(python, url):
             *(["-headers", "".join(headers)] if headers else []), "-i", media]
 
 
+def streamlink_cli(python):
+    bootstrap = "import truststore; truststore.inject_into_ssl(); from streamlink_cli.main import main; main()"
+    return [python, "-c", bootstrap]
+
+
 def fetch_vod(python, url, folder):
     path = folder / "vod.ts"
-    command([python, "-m", "streamlink", "--loglevel", "error", "--output", str(path),
+    command(streamlink_cli(python) + ["--loglevel", "error", "--output", str(path),
              url, "720p,480p,best"], timeout=21600)
     return path
 
@@ -563,12 +575,14 @@ def capture_once(python, url, folder, seconds, schedule, stop, log, segment_seco
                 if path.stat().st_size and float(row[2]) - float(row[1]) >= 8:
                     schedule(path, folder / path.stem)
 
-    x = urlparse(url).netloc.lower() in X_HOSTS
+    host = urlparse(url).netloc.lower()
+    x = host in X_HOSTS
+    latency = [] if host in KICK_HOSTS else ["--twitch-low-latency"]
     input_args = x_media(python, url) if x else ["-i", "pipe:0"]
     if stop.is_set():
         return False
     with (folder / "captura.log").open("wb") as errors:
-        sl = None if x else sp.Popen([python, "-m", "streamlink", "--stdout", "--twitch-low-latency",
+        sl = None if x else sp.Popen(streamlink_cli(python) + ["--stdout", *latency,
                                       "--loglevel", "warning", url, "480p,360p,best"],
                                      stdout=sp.PIPE, stderr=errors)
         ff = None

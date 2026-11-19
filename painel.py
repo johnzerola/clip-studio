@@ -84,14 +84,17 @@ class Panel:
             "preset", "style", "corner", "face", "game", "duration", "count", "minutes", "workers",
             "captions", "montage", "silence", "repeats", "fillers", "speech", "pause", "noise", "auto_face",
             "speech_gaps", "wait_minutes", "output_dir", "look", "hook")}
+        source_text = ""
         try:
             saved = json.loads(PREFERENCES.read_text(encoding="utf-8"))
+            if isinstance(saved.get("sources_text"), str):
+                source_text = saved["sources_text"]
             for key, value in saved.items():
                 if key in self.saved_fields:
                     self.saved_fields[key].set(value)
         except (OSError, ValueError, AttributeError, tk.TclError):
             pass
-        root.title("Clip Studio • Twitch e arquivos")
+        root.title("Clip Studio • Twitch, Kick, X e arquivos")
         root.geometry("980x860")
         root.minsize(850, 750)
         frame = ttk.Frame(root, padding=18)
@@ -99,10 +102,11 @@ class Panel:
         frame.columnconfigure(1, weight=1)
         frame.rowconfigure(14, weight=1)
         ttk.Label(frame, text="Clip Studio", font=("Segoe UI", 22, "bold")).grid(row=0, columnspan=3, sticky="w")
-        ttk.Label(frame, text="Uma fonte por linha: Twitch, link de live no X, VOD da Twitch ou vídeo local. "
+        ttk.Label(frame, text="Uma fonte por linha: Twitch, Kick, live no X, VOD público ou vídeo local. "
                               "Até 8 lives.").grid(row=1, columnspan=3, sticky="w", pady=(4, 8))
         self.sources = tk.Text(frame, height=6, font=("Consolas", 11), wrap="none")
         self.sources.grid(row=2, columnspan=2, sticky="ew")
+        self.sources.insert("1.0", source_text)
         ttk.Button(frame, text="Adicionar arquivos…", command=self.add_files).grid(row=2, column=2, sticky="n", padx=8)
         self.field(frame, 3, "Estilo", ttk.Combobox(frame, textvariable=self.style, values=list(STYLES), state="readonly"))
         self.field(frame, 4, "Facecam (opcional)", ttk.Entry(frame, textvariable=self.face))
@@ -177,8 +181,9 @@ class Panel:
 
     def save_preferences(self):
         draft = PREFERENCES.with_suffix(".tmp")
-        draft.write_text(json.dumps({key: variable.get() for key, variable in self.saved_fields.items()},
-                                    ensure_ascii=False, indent=2), encoding="utf-8")
+        state = {key: variable.get() for key, variable in self.saved_fields.items()}
+        state["sources_text"] = self.sources.get("1.0", "end-1c")
+        draft.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
         draft.replace(PREFERENCES)
 
     def add_files(self):
