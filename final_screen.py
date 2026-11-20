@@ -1,4 +1,5 @@
 """Evaluate rendered media before it enters the folder of publishable clips."""
+import base64
 import json
 import re
 import subprocess
@@ -9,6 +10,7 @@ import runtime_profile as runtime
 
 
 def evaluate(path, ff, run, expected, words, model, threshold, prior):
+    vision_model = str(prior.get("vision_model", ""))
     info = json.loads(run(["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)]))
     video = next((stream for stream in info["streams"] if stream["codec_type"] == "video"), {})
     duration = float(info["format"]["duration"])
@@ -40,8 +42,6 @@ def evaluate(path, ff, run, expected, words, model, threshold, prior):
     tokens = re.findall(r"\w+", transcript.casefold())
     pace = len(tokens) / duration
     speech_seconds = sum(max(0., min(1., end - start)) for start, end, _ in words)
-    semantic = judge_local(model, transcript, {"phase": "edited", "duration": round(duration, 2),
-                           "word_count": len(tokens), "speech_seconds": round(speech_seconds, 1)}) if tokens else None
     variety = len(set(tokens)) / max(1, len(tokens))
     from engine import inspect
     observations = inspect(path, duration, any(s["codec_type"] == "audio" for s in info["streams"]))
@@ -60,7 +60,11 @@ def evaluate(path, ff, run, expected, words, model, threshold, prior):
     opening = float(signals.get("opening", False))
     preliminary = max(0., float(prior.get("raw_score", 0)) - float(prior.get("chat_bonus", 0)))
     narrative = 20 + min(24, pace * 13) + min(18, variety * 28) + 8 * opening
-    action = 16 + min(28, max(0, motion - .9) * 10) + min(24, preliminary * .30)
+    sustained = sum(value >= 1.3 for value in movements) / max(1, len(movements))
+    action = 16 + min(34, max(0, motion - .9) * 11) + min(22, preliminary * .32) + 12 * sustained
+    semantic = judge_local(model, transcript, {"phase": "edited", "duration": round(duration, 2),
+                           "word_count": len(tokens), "speech_seconds": round(speech_seconds, 1),
+                           "motion": round(motion, 2), "active_fraction": round(sustained, 2)}) if tokens else None
     story_score = (.45 * narrative + .55 * semantic["score"] if semantic
                    else .62 * narrative + .38 * preliminary)
     # A short standalone line can score well, but it cannot carry a long quiet cut by itself.
@@ -70,7 +74,24 @@ def evaluate(path, ff, run, expected, words, model, threshold, prior):
     action_score = (.78 * action + .22 * preliminary
                     if motion >= 2.6 and (median_motion >= 1.12 or signals.get("reaction")) else 0.)
     best = "ação" if action_score > story_score else "narrativa"
-    score = round(max(story_score, action_score))
+    score = min(100, max(0, round(max(story_score, action_score))))
+    visual = None
+    if vision_model and score >= max(20, threshold-8):
+        images = []
+        try:
+            for point in (.15, .50, .85):
+                jpg = run([*ff, "-ss", str(duration*point), "-threads", "1", "-i", str(path),
+                           "-frames:v", "1", "-an", "-vf", "scale=180:320", "-c:v", "mjpeg",
+                           "-threads", "1", "-f", "image2pipe", "pipe:1"], timeout=8)
+                if jpg:
+                    images.append(base64.b64encode(jpg).decode("ascii"))
+        except (OSError, RuntimeError, subprocess.SubprocessError):
+            images = []
+        if images:
+            visual = judge_local(vision_model, transcript,
+                                 {"phase": "edited", "motion": round(motion,2), "sampled_frames": len(images)}, images)
+            if visual:
+                score = max(0,min(100,score + max(-8,min(8,round((visual["score"]-score)*.20)))))
 
     return {"status": "ready" if score >= threshold else "rejected", "technical_ok": True,
             "threshold": threshold, "score": score, "narrative_rules": round(narrative),
@@ -78,4 +99,5 @@ def evaluate(path, ff, run, expected, words, model, threshold, prior):
             "action_score": round(action_score), "speech_seconds": round(speech_seconds, 2),
             "final_motion": round(final_motion, 3), "final_audio_peak_ratio": round(max(audio_peaks, default=0), 3),
             "model": model if semantic else None,
+            "visual": visual, "vision_model": vision_model if visual else None,
             "semantic": semantic, "reason": "nota_suficiente" if score >= threshold else "abaixo_do_limiar"}

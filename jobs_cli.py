@@ -56,7 +56,9 @@ def prepare(request):
                    contextual_broll=False, keep_manual_edges=bool(manual))
     scout = ScoutSettings(model=str(request.get("model") or ""), threshold=threshold, clip_seconds=duration,
                           review_final=bool(request.get("review", False)), continuous=minutes == 0,
-                          catchup=bool(request.get("catchup", False)), performance=profile)
+                          catchup=bool(request.get("catchup", False)), performance=profile,
+                          trim_inactive=bool(request.get("trim_inactive", True)),
+                          vision_model=str(request.get("vision_model") or ""))
     return sources, opts, minutes, 1, out, 0, scout
 
 
@@ -100,6 +102,8 @@ def main():
     create.add_argument("--minutes", type=int, default=5)
     create.add_argument("--ranges", default="")
     create.add_argument("--model", default="")
+    create.add_argument("--vision-model", default="")
+    create.add_argument("--keep-idle", dest="trim_inactive", action="store_false")
     create.add_argument("--threshold", type=int, default=60)
     create.add_argument("--review", action="store_true")
     create.add_argument("--catchup", action="store_true")

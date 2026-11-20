@@ -80,3 +80,13 @@ Filtre por categoria e marque **Usar automaticamente se combinar com a fala** no
 ![Formulário de retenção com dados fictícios](img/retencao.png)
 
 ![Janela de tendências com duas fontes de consulta](img/tendencias.png)
+
+## 7. Clipes prontos para postar
+
+![Clipes aprovados, notas e estado da publicação](img/prontos-para-postar.png)
+
+A aba lista apenas clipes que passaram pela revisão e têm arquivo no disco. Use **Entender a nota** para ver a avaliação, **Assistir** para revisar o resultado e **Publicar ou agendar…** para escolher o destino.
+
+![Formulário de agendamento com canal de demonstração](img/agendar-youtube.png)
+
+[Conectar o YouTube e agendar](PUBLICACAO.md)

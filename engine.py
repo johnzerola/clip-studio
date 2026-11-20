@@ -14,7 +14,8 @@ from functools import lru_cache
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from urllib.parse import parse_qs, urlparse
-from editorial import Cleanup, clean_ranges, refine_montage, silence_edits, speech_gap_edits, transcript_edits
+from editorial import (Cleanup, clean_ranges, quiet_live_edits, refine_montage,
+                       silence_edits, speech_gap_edits, transcript_edits)
 from facecam import estimate, gameplay_region
 from broll_library import STILLS
 from finishing import accent_shots, caption_groups, pick_broll
@@ -62,6 +63,7 @@ class Options:
     contextual_broll: bool = True
     auto_music: bool | None = None
     keep_manual_edges: bool = False
+    trim_inactive: bool = False
 
 
 def command(args, **kwargs):
@@ -635,10 +637,14 @@ def process(source, folder, options, log, *, screening=None, staging_dir=None, o
                 log(f"Transcrevendo o trecho de {low:.1f}s a {high:.1f}s.")
                 words = transcribe(source, low, high)
             edits = list(transcript_edits(words, cleanup))
-            if cleanup.speech_gaps:
-                edits.extend(speech_gap_edits(words, cleanup))
-            if audio and cleanup.silence:
-                edits.extend(audio_silences(source, low, high, cleanup))
+            if options.trim_inactive:
+                bins = inspect(source, high-low, audio, options.face, start=low, normalized=False)
+                edits.extend(quiet_live_edits(low, high, bins, words, cleanup.noise))
+            else:
+                if cleanup.speech_gaps:
+                    edits.extend(speech_gap_edits(words, cleanup))
+                if audio and cleanup.silence:
+                    edits.extend(audio_silences(source, low, high, cleanup))
             if options.manual and options.keep_manual_edges:
                 edits = [edit for edit in edits if edit[0] > low + .20 and edit[1] < high - .20]
             ranges, removed = clean_ranges(low, high, edits, words)

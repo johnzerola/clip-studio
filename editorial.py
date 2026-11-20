@@ -132,3 +132,25 @@ def refine_montage(parts, words, total):
         result.append(best)
         previous_terms |= best_terms
     return result
+
+def quiet_live_edits(low, high, bins, words, noise, step=2.):
+    """Remove only long stretches with quiet audio, little motion and no speech."""
+    gate = 32768 * 10 ** (noise / 20)
+    live_motion = [motion for _, motion, _ in bins if motion >= 2]
+    background = sorted(live_motion)[len(live_motion)//2] if live_motion else 0.
+    motion_gate = min(2.5, max(.85, background * .28))
+    idle = None
+    for index in range(len(bins) + 1):
+        start = low + index * step
+        if index < len(bins):
+            rms, movement, face_motion = bins[index]
+            if (rms < gate and movement < motion_gate and face_motion < motion_gate
+                    and not any(a < start + step and b > start for a, b, _ in words)):
+                if idle is None:
+                    idle = start
+                continue
+        if idle is not None:
+            end = min(start, high)
+            if end - idle >= 4:
+                yield idle + .4, end - .4, "espera sem fala nem ação", ""
+            idle = None

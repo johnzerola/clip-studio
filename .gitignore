@@ -24,3 +24,6 @@ cookies.txt
 .env.*
 biblioteca.local/
 !biblioteca/Gatinhos/gatinho-acenando-original.mp4
+criterios.local.json
+client_secret*.json
+oauth-client*.json

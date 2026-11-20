@@ -16,6 +16,8 @@ def main():
     parser.add_argument("--channels-file", type=Path, help="Um canal por linha")
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--model", default="qwen3:4b")
+    parser.add_argument("--vision-model", default="")
+    parser.add_argument("--keep-idle", action="store_true")
     parser.add_argument("--threshold", type=int, default=60)
     parser.add_argument("--clip-seconds", type=int, default=45)
     parser.add_argument("--minutes", type=int, default=0, help="0 monitora continuamente")
@@ -56,7 +58,8 @@ def main():
     scout = ScoutSettings(model=args.model, threshold=args.threshold, clip_seconds=args.clip_seconds,
                           review_final=True, continuous=args.minutes == 0, catchup=not args.no_catchup,
                           replay_count=args.recent, replay_period=args.replay_hours, replay_only=args.replay_only,
-                          replay_gib=args.replay_gib, live_poll_hours=args.live_poll_hours, performance=args.performance)
+                          replay_gib=args.replay_gib, live_poll_hours=args.live_poll_hours, performance=args.performance,
+                          trim_inactive=not args.keep_idle, vision_model=args.vision_model)
     try:
         return tracked_session("CLI", [(url, "live", []) for url, _ in normalized], edit, args.minutes, 1,
                                args.out.resolve(), 15, stop, lambda line: print(line, flush=True), scout)

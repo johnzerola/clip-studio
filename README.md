@@ -17,7 +17,7 @@
 | Acompanhar um canal ou buscar as transmissões anteriores | **Fontes** e **Lives e gravações** |
 | Comparar enquadramentos 9:16 | **Estilo → Ver e escolher…** |
 | Usar trilha, melhorar a voz e escolher imagens de apoio | **Som e B-roll** |
-| Escolher os melhores cortes para postar | **Fila de postagem** |
+| Escolher os melhores cortes para postar | **Prontos para postar** |
 | Usar o computador enquanto o projeto roda | **Leve · uso diário**. Comece com um canal e acompanhe o registro |
 
 ## Baixar e instalar
@@ -90,7 +90,11 @@ Cole um link por linha. Em **Lives e gravações**, escolha **Aguardar novas liv
 
 ## Revisar e publicar
 
-A **Fila de postagem** mostra nota de 0 a 100, situação da revisão e clipes parecidos. Escolha um destino para ver o ranking. Em **Registrar retenção…**, informe a porcentagem média assistida e as visualizações do painel da plataforma para calibrar a ordem com amostra suficiente. A nota original fica disponível. Para publicar, abra o **Studio** pelo botão e finalize na conta já autenticada no navegador. O status e a agenda do Clip Studio são registros locais.
+Em **Prontos para postar**, veja os clipes aprovados, assista e abra **Entender a nota**. **Revisão completa…** mostra clipes parecidos, descartes e retenção. Em **Registrar retenção…**, informe métricas da plataforma para calibrar a ordem com amostra suficiente.
+
+No **YouTube**, conecte um cliente OAuth autorizado, confirme o canal e use **Enviar e agendar**. A plataforma cuida da publicação no horário que confirmar. No **TikTok**, a opção **Abrir Studio** copia a descrição e abre o destino para finalizar. [Guia de publicação e agendamento](docs/PUBLICACAO.md)
+
+![Aba Prontos para postar com notas e estado dos envios](docs/img/prontos-para-postar.png)
 
 ![Fila com clipes fictícios, notas, similaridade e botões de publicação](docs/img/fila.png)
 
@@ -107,6 +111,8 @@ Em dois testes locais com o mesmo trecho sintético de 12 s, a exportação comp
 | [Instalação no Windows](docs/INSTALACAO.md) | Primeira instalação, verificação, atualização e erros comuns |
 | [Guia do painel](docs/GUIA-DO-PAINEL.md) | Todas as telas e opções, com exemplos |
 | [CLI e MCP integrados ao painel](docs/CLI-MCP.md) | Iniciar trabalhos, acompanhar status, consultar resultados e pedir parada |
+| [Pesquisa de 35 repositórios e critérios da nota](docs/VIRALIDADE.md) | Chat, voz, movimento, edição de pausas e RAG local |
+| [Publicação e agendamento](docs/PUBLICACAO.md) | Aba de clipes, OAuth YouTube e fluxo TikTok |
 | [Arquitetura e integrações](docs/ARQUITETURA.md) | Motores, arquivos de saída, CLI, OTIO e MCP |
 | [Modo Leve e revisão](docs/REVISAO-LEVE.md) | Prévia, similaridade, calibração e desempenho |
 | [Pesquisa de 55 repositórios](docs/PESQUISA.md) | Referências e critérios de integração |

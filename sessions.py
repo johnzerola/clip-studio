@@ -116,7 +116,7 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                     raise
                 log(f"Download concluído: {path.name}.")
                 release = settings.render and scout.clean
-                screening = (scout.model, scout.threshold, {}) if scout.review_final and settings.render else None
+                screening = (scout.model, scout.threshold, {"vision_model": scout.vision_model}) if scout.review_final and settings.render else None
                 finished = analysis.submit(render_job, path, result,
                                            replace(settings, save_review=False) if release else settings,
                                            release, screening)
@@ -161,10 +161,11 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                 screening = None
                 if selected:
                     end = min(selected[1], probe(path)[0])
-                    settings = replace(settings, manual=((min(selected[0], max(0., end - 1)), end),))
+                    settings = replace(settings, manual=((min(selected[0], max(0., end - 1)), end),),
+                                       trim_inactive=scout.trim_inactive)
                     if scout.review_final and settings.render:
                         prior = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
-                        screening = (scout.model, scout.threshold, prior)
+                        screening = (scout.model, scout.threshold, dict(prior, vision_model=scout.vision_model))
                         settings = replace(settings, save_review=False)
                 return schedule(path, result / block.relative_to(capture_dir), settings,
                                 bounded=scout.enabled, managed=scout.enabled, screening=screening, live_review=screening is not None)
@@ -197,7 +198,7 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                     overrides["close_focus"] = float(regions[2])
                 settings = replace(options, **overrides)
                 if kind == "file":
-                    screening = (scout.model, scout.threshold, {}) if scout.review_final and settings.render else None
+                    screening = (scout.model, scout.threshold, {"vision_model": scout.vision_model}) if scout.review_final and settings.render else None
                     schedule(Path(source), result, settings, screening=screening)
                 else:
                     folder = batch / "Capturas" / source_name

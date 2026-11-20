@@ -36,7 +36,7 @@ flowchart LR
 3. **Montagem.** O app aplica cortes manuais ou automáticos, cria a timeline por estilo e prepara legendas, voz, trilha e B-roll. A prévia manual busca quadros sob demanda e preserva as marcas de início e fim na edição.
 4. **Exportação.** FFmpeg grava MP4 vertical. O perfil compacto Leve usa H.264 em uma etapa quando libx264 está disponível. Outros perfis podem transcodificar para H.264 ou H.265 e verificar o arquivo menor antes de substituir o temporário.
 5. **Revisão.** Quando habilitada, verifica o MP4 e registra o motivo da aprovação ou rejeição. Similaridade usa hash exato, origem e intervalos, sequências da fala ou até três quadros reduzidos, conforme os dados disponíveis.
-6. **Publicação.** O Studio da plataforma é aberto no navegador. Status, destino e métricas informadas são armazenados localmente. Retenção ajusta a ordem da fila com amostra suficiente, sem treinar o Ollama.
+6. **Publicação.** O usuário confirma o envio no painel. O YouTube agenda por OAuth, e o TikTok segue no Studio. `publish_state.py` armazena o status local e `publish_panel.py` exibe os aprovados. [Guia de publicação](PUBLICACAO.md)
 
 ## Onde ficam os dados
 

@@ -1,5 +1,6 @@
 """Bounded rolling live analysis. It never makes the recorder wait for inference."""
 import collections
+import hashlib
 import json
 import math
 import os
@@ -18,7 +19,7 @@ from urllib.parse import urlparse
 
 from engine import FF, command, inspect, probe, transcribe
 from decision_bank import record
-from viral_rank import candidates, chat_bonus, judge_local
+from viral_rank import candidates, judge_local, rank_chat
 import runtime_profile as runtime
 
 INFERENCE = {False: threading.BoundedSemaphore(2), True: threading.BoundedSemaphore(1)}
@@ -40,6 +41,8 @@ class ScoutSettings:
     replay_gib: int = 12
     live_poll_hours: int = 0
     performance: str = "equilibrado"
+    trim_inactive: bool = True
+    vision_model: str = ""
 
 
 class TwitchPulse:
@@ -47,6 +50,7 @@ class TwitchPulse:
         self.channel, self.log = channel, log
         self.stop = threading.Event()
         self.messages = collections.deque(maxlen=36000)
+        self.salt = os.urandom(16)
         self.lock = threading.Lock()
         self.active = False
         self.thread = threading.Thread(target=self.run, daemon=True)
@@ -83,7 +87,9 @@ class TwitchPulse:
                                 elif b" PRIVMSG #" in line:
                                     self.active = True
                                     with self.lock:
-                                        self.messages.append(time.monotonic())
+                                        sender = line.split(b"!", 1)[0].lstrip(b":")
+                                        user = hashlib.blake2b(sender, key=self.salt, digest_size=6).digest()
+                                        self.messages.append((time.monotonic(), user))
                                 elif b"Login authentication failed" in line:
                                     self.log("Chat Twitch anônimo recusado; análise segue sem chat.")
                                     return
@@ -96,10 +102,64 @@ class TwitchPulse:
 
     def measure(self, end, seconds):
         with self.lock:
-            now = sum(1 for t in self.messages if end - seconds <= t <= end)
-            before = sum(1 for t in self.messages if end - seconds - 90 <= t < end - seconds)
+            current = [person for t, person in self.messages if end - seconds <= t <= end]
+            before = sum(1 for t, _person in self.messages if end - seconds - 90 <= t < end - seconds)
+        now = len(current)
         ratio = (now / max(seconds, 1)) / max(.08, before / 90)
-        return now, round(min(5., ratio), 2)
+        return now, round(min(5., ratio), 2), len(set(current))
+
+
+class YouTubePulse(TwitchPulse):
+    def run(self):
+        from datetime import datetime
+        from urllib.parse import urlencode
+        from youtube_publish import API, account, exchange, read_json
+
+        try:
+            key = os.getenv("CLIP_STUDIO_YOUTUBE_CHAT_KEY", "").strip()
+            saved = None if key else account()
+            if not key and not saved:
+                self.log("Chat do YouTube requer autorização do YouTube ou chave de chat.")
+                return
+            token = (exchange(saved["client"], grant_type="refresh_token",
+                              refresh_token=saved["refresh_token"])["access_token"] if saved else None)
+
+            def api(path, params):
+                if key:
+                    params["key"] = key
+                return read_json(API + path + "?" + urlencode(params), token=token)
+
+            result = api("videos", {"id": self.channel, "part": "liveStreamingDetails"})
+            details = result["items"][0]["liveStreamingDetails"]
+            if not details.get("activeLiveChatId"):
+                self.log("YouTube sem chat ativo para esta live.")
+                return
+            params = {"liveChatId": details["activeLiveChatId"], "part": "snippet,authorDetails", "maxResults": 200}
+            self.active = True
+            self.log("Chat YouTube conectado pela API. Somente contagem em memória.")
+            while not self.stop.is_set():
+                result = api("liveChatMessages", params)
+                now, monotonic = time.time(), time.monotonic()
+                additions = []
+                for item in result.get("items", []):
+                    snippet = item.get("snippet", {})
+                    who = item.get("authorDetails", {}).get("channelId")
+                    if not who or snippet.get("type") != "textMessageEvent":
+                        continue
+                    at = datetime.fromisoformat(snippet["publishedAt"]).timestamp()
+                    if -3 <= now-at <= 120:
+                        user = hashlib.blake2b(who.encode(), key=self.salt, digest_size=6).digest()
+                        additions.append((min(monotonic, monotonic - (now-at)), user))
+                with self.lock:
+                    self.messages.extend(additions)
+                if result.get("offlineAt") or not result.get("nextPageToken"):
+                    return
+                params["pageToken"] = result["nextPageToken"]
+                self.stop.wait(max(5., float(result.get("pollingIntervalMillis", 5000))/1000))
+        except (OSError, ValueError, IndexError, KeyError, TypeError, RuntimeError):
+            self.log("Chat YouTube indisponível. A triagem segue com áudio, fala e movimento.")
+        finally:
+            self.active = False
 
 
 class LiveScout:
@@ -115,6 +175,9 @@ class LiveScout:
         self.finished = threading.Event()
         parsed = urlparse(url)
         self.chat = TwitchPulse(parsed.path.strip("/"), log) if parsed.hostname == "www.twitch.tv" else None
+        youtube_id = re.fullmatch(r"/live/([A-Za-z0-9_-]{11})", parsed.path)
+        if parsed.hostname == "www.youtube.com" and youtube_id:
+            self.chat = YouTubePulse(youtube_id[1], log)
         if self.chat:
             self.chat.thread.start()
         self.worker = threading.Thread(target=self.run, daemon=True)
@@ -206,12 +269,11 @@ class LiveScout:
         picks = candidates(all_words, signals, duration, self.settings.clip_seconds, duration - seconds)
         if not picks:
             return
-        pick = max(picks, key=lambda row: row["av_score"])
+        measure = self.chat.measure if self.chat and near_realtime else None
+        pick = rank_chat(picks, duration, arrival, measure)[0]
         start, end = pick["start"], pick["end"]
-        # Chat reacts after the moment. Use a short local window, not the entire buffer.
-        chat_end = min(arrival, arrival - (duration - end) + 4)
-        count, ratio = self.chat.measure(chat_end, 10) if self.chat and near_realtime else (0, 0.)
-        bonus = chat_bonus(count, ratio)
+        count, ratio, people, bonus = pick["chat"]
+        pick["features"].update(chat_messages=count, chat_ratio=ratio, chat_people=people)
         score = min(100, pick["av_score"] + bonus)
         verdict = None
         judge_status = "disabled" if not self.settings.model else "not_eligible"
@@ -228,7 +290,7 @@ class LiveScout:
         from uuid import uuid4
         key = f"candidato_{time.strftime('%H%M%S')}_{uuid4().hex[:6]}"
         result = {"id": key, "raw_score": score, "score": combined, "accepted": accepted, "chat_messages": count,
-                  "chat_ratio": ratio, "chat_bonus": bonus, "chat_connected": bool(self.chat and self.chat.active),
+                  "chat_ratio": ratio, "chat_people": people, "chat_bonus": bonus, "chat_connected": bool(self.chat and self.chat.active),
                   "chat_aligned": bool(self.chat and near_realtime), "signals": pick["features"],
                   "selected_range": [start, end], "judge_status": judge_status,
                   "preliminary_threshold": preliminary_threshold,

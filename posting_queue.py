@@ -102,6 +102,7 @@ def db_open(folder):
             title TEXT, description TEXT, tags TEXT, trends TEXT,
             updated TEXT DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS clip_reviews (clip TEXT PRIMARY KEY, detail TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS clip_signatures (
             clip TEXT PRIMARY KEY, speech TEXT NOT NULL, visual TEXT NOT NULL, duration REAL NOT NULL,
             source TEXT NOT NULL, ranges TEXT NOT NULL, duplicate_of TEXT
@@ -158,6 +159,11 @@ def enqueue(folder, candidate, media, verdict, transcript, hook, model):
                       VALUES (?,?,?,?,?,?,?,?,?)""", (key, str(media.resolve()) if media else None, verdict["score"],
                    verdict["status"], verdict["reason"], title[:95], description[:450], " ".join(tags),
                    json.dumps(trends, ensure_ascii=False)))
+        db.execute("INSERT OR REPLACE INTO clip_reviews VALUES (?,?)",
+                   (key, json.dumps({field: verdict[field] for field in
+                                     ("reason","review_path","narrative_rules","action_rules","model",
+                                      "semantic","visual","vision_model","speech_seconds","final_motion","threshold") if field in verdict},
+                                    ensure_ascii=False)))
         if media:
             register_similarity(db, key, words, duration, visual, source, verdict.get("ranges", ()))
     return key

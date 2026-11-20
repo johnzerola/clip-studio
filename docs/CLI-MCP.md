@@ -68,3 +68,5 @@ Exemplo de argumentos de `start_job`:
 O servidor de trabalhos usa stdio. Use o MCP com clientes locais de confiança e com acesso às mídias e pastas selecionadas. O MCP de efeitos em `effects_mcp.py` continua separado. A CLI integrada aceita MP4s e URLs públicas que o motor já suporta; a disponibilidade depende da plataforma.
 
 ![Janela de trabalhos compartilhados com três sessões de demonstração](img/trabalhos.png)
+
+Para a triagem, `--vision-model` na CLI e `vision_model` no MCP ativam a análise opcional de quadros quando a revisão está ligada. Use `--keep-idle` ou `trim_inactive: false` para desativar o filtro combinado de espera. [Entenda a nota e a recuperação de critérios](VIRALIDADE.md).

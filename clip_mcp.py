@@ -21,6 +21,8 @@ class JobRequest(BaseModel):
     captions: bool = True
     music: bool = True
     model: str = ""
+    vision_model: str = ""
+    trim_inactive: bool = True
     review: bool = False
     threshold: int = Field(60, ge=20, le=95)
     catchup: bool = False

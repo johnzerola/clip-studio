@@ -76,8 +76,10 @@ class Panel:
         self.hook = tk.BooleanVar(value=True)
         self.scout_live = tk.BooleanVar(value=True)
         self.scout_model = tk.StringVar(value="qwen3:4b")
+        self.vision_model = tk.StringVar()
         self.scout_threshold = tk.IntVar(value=60)
         self.scout_cleanup = tk.BooleanVar(value=True)
+        self.trim_live = tk.BooleanVar(value=True)
         self.scout_review = tk.BooleanVar(value=True)
         self.scout_continuous = tk.BooleanVar(value=True)
         self.scout_catchup = tk.BooleanVar(value=True)
@@ -119,8 +121,8 @@ class Panel:
             "preset", "style", "corner", "face", "game", "duration", "count", "minutes", "workers", "performance",
             "captions", "montage", "silence", "repeats", "fillers", "speech", "pause", "noise", "auto_face",
             "speech_gaps", "wait_minutes", "output_dir", "look", "hook", "polish", "broll_dir", "close_focus",
-            "scout_live", "scout_model", "scout_threshold", "scout_cleanup", "scout_review",
-            "scout_continuous", "scout_catchup", "compression",
+            "scout_live", "scout_model", "vision_model", "scout_threshold", "scout_cleanup", "scout_review",
+            "scout_continuous", "scout_catchup", "compression", "trim_live",
             "replay_count", "replay_period", "replay_only", "replay_gib", "live_poll_hours",
             "voice_polish", "music_mode", "music", "music_db", "transition", "sfx", "sfx_peak")}
         source_text = ""
@@ -145,7 +147,7 @@ class Panel:
         self.update_broll_count()
         root.title("Clip Studio • Lives, VODs e arquivos")
         tema.apply(root)
-        root.geometry("1030x808")
+        root.geometry("1030x860")
         root.minsize(900, 735)
         header = tk.Frame(root, bg=tema.DEEP, padx=24, pady=15)
         header.pack(fill="x")
@@ -175,10 +177,14 @@ class Panel:
             row=3, column=1, sticky="ew", padx=(10, 0), pady=(7, 0))
         tabs = ttk.Notebook(frame)
         tabs.grid(row=11, column=0, columnspan=3, sticky="ew", pady=(12, 4))
-        editorial, audio_tab, auto_tab = [ttk.Frame(tabs, padding=(12, 10)) for _ in range(3)]
-        for tab, title in zip((editorial, audio_tab, auto_tab),
-                              ("Edição", "Som e B-roll", "Lives e gravações")):
+        editorial, audio_tab, auto_tab, ready_tab = [ttk.Frame(tabs, padding=(12, 10)) for _ in range(4)]
+        for tab, title in zip((editorial, audio_tab, auto_tab, ready_tab),
+                              ("Edição", "Som e B-roll", "Lives e gravações", "Prontos para postar")):
             tabs.add(tab, text=title)
+        from publish_panel import PublishTab
+        self.publish_tab = PublishTab(ready_tab, self.output_path, self.open_posting)
+        tabs.bind("<<NotebookTabChanged>>", lambda _e: self.publish_tab.refresh()
+                  if tabs.select() == str(ready_tab) else None)
         tabs.select(editorial)
         self.advanced = tk.Toplevel(root)
         self.advanced.withdraw()
@@ -307,8 +313,13 @@ class Panel:
         archive_help = ttk.Frame(auto_tab)
         archive_help.grid(row=4, columnspan=5, sticky="w", pady=(4, 0))
         ttk.Checkbutton(archive_help, text="Só lives que já terminaram", variable=self.replay_only).pack(side="left")
+        ttk.Checkbutton(archive_help, text="Remover esperas sem fala nem ação", variable=self.trim_live).pack(side="left", padx=8)
         ttk.Label(archive_help, text="0 gravações = desativado. 0 h = buscar gravações uma vez.",
                   style="Muted.TLabel").pack(side="left", padx=8)
+        visual_options = ttk.Frame(framing)
+        visual_options.grid(row=11,columnspan=5,sticky="ew",pady=(5,0))
+        ttk.Label(visual_options,text="Modelo visual Ollama (opcional)").pack(side="left")
+        ttk.Entry(visual_options,textvariable=self.vision_model,width=45).pack(side="left",padx=8)
         ttk.Label(frame, text="Pasta de saída").grid(row=12, column=0, sticky="w", pady=(8, 0))
         ttk.Entry(frame, textvariable=self.output_dir).grid(row=12, column=1, sticky="ew", pady=(8, 0))
         ttk.Button(frame, text="Escolher pasta…", command=self.pick_output).grid(row=12, column=2, padx=8, pady=(8, 0))
@@ -516,6 +527,9 @@ class Panel:
         self.root.after(150, self.poll)
 
     def close(self):
+        if self.publish_tab.busy:
+            messagebox.showinfo("Publicação em andamento", "Aguarde o resultado do YouTube antes de fechar.")
+            return
         if self.active:
             self.stop.set()
             messagebox.showinfo("Sessão em andamento", "Captura sinalizada para parar. "
@@ -593,7 +607,8 @@ class Panel:
                                   catchup=self.scout_catchup.get(), replay_count=self.replay_count.get(),
                                   replay_period=self.replay_period.get(), replay_only=self.replay_only.get(),
                                   replay_gib=self.replay_gib.get(), live_poll_hours=self.live_poll_hours.get(),
-                                  performance=next(key for key,p in PROFILES.items() if p.label == self.performance.get()))
+                                  performance=next(key for key,p in PROFILES.items() if p.label == self.performance.get()),
+                                  trim_inactive=self.trim_live.get(), vision_model=self.vision_model.get().strip())
             if scout.replay_count or scout.replay_period or scout.replay_only:
                 from replay_library import archive_url
                 if not lives or scout.replay_count not in (2, 3) or scout.replay_period not in (0, 1, 2, 3):
