@@ -8,6 +8,13 @@ from job_registry import cancel, get, list_jobs, outputs, submit
 server = FastMCP("clip-studio")
 
 
+@server.tool()
+def modelar_reference(project: str, preset: str) -> dict:
+    """Verifica um preset aprovado do AI Video Director para revisão no Modelar. Não renderiza."""
+    from modelar_bridge import load_profile
+    return load_profile(project, preset)
+
+
 class JobRequest(BaseModel):
     sources: list[str] = Field(min_length=1, max_length=8)
     output: str | None = None

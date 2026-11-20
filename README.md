@@ -2,7 +2,7 @@
 
 **Transforme lives e gravações em cortes verticais para Shorts, TikTok e Reels.** Aplicativo Windows para acompanhar canais, escolher momentos, editar com legendas e revisar clipes antes de publicar.
 
-**Windows 10/11** · **Português** · **Código aberto sob MIT** · **v0.4.0**
+**Windows 10/11** · **Português** · **Código aberto sob MIT** · **v0.4.1**
 
 **[Baixar para Windows](https://github.com/johnzerola/clip-studio/releases/latest/download/Clip-Studio-Windows.zip)** · [Guia ilustrado](docs/GUIA-DO-PAINEL.md) · [Arquitetura](docs/ARQUITETURA.md) · [Contribuir](#contribuir)
 
@@ -140,3 +140,7 @@ Quer ajudar a melhorar os cortes, a captura ou o painel? Abra uma [issue](https:
 ## Licença
 
 [Código sob licença MIT](LICENSE). O [Live Clipper](https://github.com/akm72-bit/live-clipper) foi a referência inicial. Dependências e mídias mantêm seus próprios termos. Os dois exemplos de B-roll incluídos têm [origem documentada](biblioteca/ORIGEM.md). Use material que você pode editar e publicar.
+
+## Modelar e AI Video Director
+
+O botão **Modelar…** importa presets aprovados de referências e inicia cortes pela fila com edição V9. [Como usar, CLI, MCP e limites](docs/MODELAR.md).

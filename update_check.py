@@ -8,7 +8,7 @@ import urllib.request
 from datetime import date
 from pathlib import Path
 
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 OWNER = "johnzerola"
 REPOSITORY = "clip-studio"
 API_URL = f"https://api.github.com/repos/{OWNER}/{REPOSITORY}/releases/latest"

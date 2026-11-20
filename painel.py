@@ -173,6 +173,8 @@ class Panel:
         top = ttk.Frame(workspace, padding=(18, 9))
         top.pack(fill="x")
         ttk.Label(top, textvariable=self.session_status, style="Muted.TLabel").pack(side="left")
+        from modelar_bridge import show_dialog
+        ttk.Button(top, text="Modelar…", command=lambda: show_dialog(root, self.output_path)).pack(side="right", padx=8)
         theme_choice = ttk.Combobox(top, textvariable=self.appearance, values=tema.MODES,
                                     width=9, state="readonly")
         theme_choice.pack(side="right")
