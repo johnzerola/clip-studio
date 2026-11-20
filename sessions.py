@@ -22,7 +22,7 @@ from runtime_profile import configure, lower_worker_priority
 
 
 def run_session(sources, options, minutes, workers, output, wait_minutes, stop, write_log,
-                scout=ScoutSettings(False)):
+                scout=ScoutSettings(False), *, on_batch=None):
     batch = output / (datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:6])
     errors = queue.SimpleQueue()
     log_lock = threading.Lock()
@@ -49,6 +49,8 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
 
     try:
         batch.mkdir(parents=True)
+        if on_batch:
+            on_batch(batch)
         log(f"Sessão: {batch}")
         profile = configure(scout.performance)
         workers = min(workers, profile.max_renders)

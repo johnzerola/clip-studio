@@ -106,6 +106,7 @@ Em dois testes locais com o mesmo trecho sintético de 12 s, a exportação comp
 | --- | --- |
 | [Instalação no Windows](docs/INSTALACAO.md) | Primeira instalação, verificação, atualização e erros comuns |
 | [Guia do painel](docs/GUIA-DO-PAINEL.md) | Todas as telas e opções, com exemplos |
+| [CLI e MCP integrados ao painel](docs/CLI-MCP.md) | Iniciar trabalhos, acompanhar status, consultar resultados e pedir parada |
 | [Arquitetura e integrações](docs/ARQUITETURA.md) | Motores, arquivos de saída, CLI, OTIO e MCP |
 | [Modo Leve e revisão](docs/REVISAO-LEVE.md) | Prévia, similaridade, calibração e desempenho |
 | [Pesquisa de 55 repositórios](docs/PESQUISA.md) | Referências e critérios de integração |

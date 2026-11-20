@@ -101,6 +101,7 @@ class Panel:
         self.broll_window = None
         self.style_window = None
         self.trim_window = None
+        self.jobs_window = None
         self.visual_trim = None
         self.close_focus = tk.DoubleVar(value=.5)
         self.preset = tk.StringVar(value="GTA / Reação")
@@ -325,6 +326,8 @@ class Panel:
         ttk.Button(bar, text="Fila de postagem", command=self.open_posting).pack(side="right", padx=8)
         ttk.Label(frame, textvariable=self.session_status, style="Muted.TLabel").grid(
             row=14, column=0, columnspan=2, sticky="w", pady=(5, 3))
+        ttk.Button(frame, text="Trabalhos CLI/MCP…", command=self.open_jobs).grid(
+            row=14, column=1, sticky="e", padx=(0, 10), pady=(0, 5))
         ttk.Button(frame, text="Configurações avançadas…", command=self.show_advanced).grid(
             row=14, column=2, sticky="e", pady=(0, 5))
         frame.rowconfigure(14, weight=0)
@@ -469,6 +472,14 @@ class Panel:
             self.trim_window = open_trim(self.root, source, ranges, apply, parse_time)
         except (ValueError, OSError) as error:
             messagebox.showerror("Ajustar corte", str(error), parent=self.root)
+
+    def open_jobs(self):
+        from painel_jobs import open_jobs
+
+        if self.jobs_window and self.jobs_window.winfo_exists():
+            self.jobs_window.lift()
+            return
+        self.jobs_window = open_jobs(self.root)
 
     def open_posting(self):
         from posting_panel import show_queue
@@ -625,10 +636,13 @@ class Panel:
                          daemon=True).start()
 
     def run(self, sources, options, minutes, workers, output, wait_minutes, scout=ScoutSettings(False)):
-        from sessions import run_session
+        from job_registry import tracked_session
 
         try:
-            run_session(sources, options, minutes, workers, output, wait_minutes, self.stop, self.log, scout)
+            tracked_session("Painel", sources, options, minutes, workers, output, wait_minutes,
+                            self.stop, self.log, scout)
+        except (OSError, RuntimeError) as error:
+            self.log(str(error))
         finally:
             self.events.put(None)
 

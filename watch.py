@@ -7,7 +7,7 @@ from pathlib import Path
 from editorial import Cleanup
 from engine import Options, live_source
 from live_scout import ScoutSettings
-from sessions import run_session
+from job_registry import tracked_session
 
 
 def main():
@@ -57,8 +57,11 @@ def main():
                           review_final=True, continuous=args.minutes == 0, catchup=not args.no_catchup,
                           replay_count=args.recent, replay_period=args.replay_hours, replay_only=args.replay_only,
                           replay_gib=args.replay_gib, live_poll_hours=args.live_poll_hours, performance=args.performance)
-    return run_session([(url, "live", []) for url, _ in normalized], edit, args.minutes, 1,
-                       args.out.resolve(), 15, stop, lambda line: print(line, flush=True), scout)
+    try:
+        return tracked_session("CLI", [(url, "live", []) for url, _ in normalized], edit, args.minutes, 1,
+                               args.out.resolve(), 15, stop, lambda line: print(line, flush=True), scout)
+    except (OSError, RuntimeError) as error:
+        parser.exit(1, f"{error}\n")
 
 
 if __name__ == "__main__":

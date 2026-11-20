@@ -79,6 +79,10 @@ $py = ".\.venv\Scripts\python.exe"
 & $py -X utf8 .\review.py "D:\Cortes\plano-01\cortes.json" --out "D:\Cortes\revisao.otio"
 ```
 
+## Trabalhos compartilhados pelo painel, CLI e MCP
+
+O registro local em `work/jobs.sqlite3` reúne as sessões iniciadas no painel, no `watch.py`, no `ClipJobs.cmd` e no MCP de trabalhos. A janela **Trabalhos CLI/MCP…** lê estado, eventos e caminho da sessão. Um trabalho controlado por vez evita que o painel e um cliente externo iniciem renderizações concorrentes. O processo de trabalho executa o mesmo motor do painel. [Guia da CLI e do MCP](CLI-MCP.md)
+
 ## Integrações opcionais
 
 - **OpenTimelineIO.** A timeline aponta para a mídia de origem e referencia intervalos. Guarde a captura para editar depois. Confira a importação no editor de destino e use também o MP4 para ver efeitos compostos.
