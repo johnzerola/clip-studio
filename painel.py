@@ -3,6 +3,7 @@ import json
 import os
 import queue
 import shutil
+import sqlite3
 import sys
 import threading
 import tkinter as tk
@@ -173,6 +174,8 @@ class Panel:
         top = ttk.Frame(workspace, padding=(18, 9))
         top.pack(fill="x")
         ttk.Label(top, textvariable=self.session_status, style="Muted.TLabel").pack(side="left")
+        from modelar_bridge import show_dialog
+        ttk.Button(top, text="Modelar…", command=lambda: show_dialog(root, self.output_path)).pack(side="right", padx=8)
         theme_choice = ttk.Combobox(top, textvariable=self.appearance, values=tema.MODES,
                                     width=9, state="readonly")
         theme_choice.pack(side="right")
@@ -454,22 +457,64 @@ class Panel:
 
     def check_for_updates(self):
         from update_check import check_for_update
+        if not hasattr(self, "update_events"):
+            self.update_events = queue.Queue()
+            self.update_seen = set()
+        check_for_update(self.update_events.put)
+        self.root.after(900000, self.check_for_updates)
+        if not getattr(self, "update_poll_started", False):
+            self.update_poll_started = True
+            self.root.after(500, self.poll_updates)
 
-        check_for_update(lambda version, url: self.root.after(
-            0, lambda: self.offer_update(version, url)))
+    def update_busy(self):
+        from job_registry import list_jobs
+        if self.active or self.publish_tab.busy:
+            return True
+        return any(row["state"] in ("queued", "running") for row in list_jobs())
 
-    def offer_update(self, version, url):
-        if not self.root.winfo_exists():
+    def poll_updates(self):
+        try:
+            busy = self.update_busy()
+        except (OSError, sqlite3.Error):
+            busy = True
+        if not busy:
+            try:
+                release = self.update_events.get_nowait()
+            except queue.Empty:
+                pass
+            else:
+                tag = release.get("tag_name", "")
+                if tag not in self.update_seen:
+                    self.update_seen.add(tag)
+                    self.offer_update(release)
+        if self.root.winfo_exists():
+            self.root.after(2000, self.poll_updates)
+
+    def offer_update(self, release):
+        from update_install import start_update, select_assets
+        tag = release.get("tag_name", "")
+        notes = str(release.get("body") or "Melhorias e correções do Clip Studio.")[:1800]
+        try:
+            select_assets(release)
+        except ValueError:
+            # A release pode estar entre a publicação e o envio dos anexos.
+            self.update_seen.discard(tag)
             return
-        if messagebox.askyesno(
-            "Atualização disponível",
-            f"O Clip Studio {version} está disponível.\n\n"
-            "Quer abrir a página da atualização no GitHub?",
-            parent=self.root,
-        ):
-            import webbrowser
-
-            webbrowser.open(url)
+        if messagebox.askyesno("Atualização disponível",
+            f"Clip Studio {tag}\n\n{notes}\n\n"
+            "Atualizar agora? O painel será fechado, a atualização será instalada e o app abrirá novamente. "
+            "A instalação anterior será preservada.", parent=self.root):
+            try:
+                if self.update_busy():
+                    messagebox.showinfo("Atualização", "Aguarde os trabalhos em andamento terminarem.", parent=self.root)
+                    self.update_seen.discard(tag)
+                    return
+                self.save_preferences()
+                self.publish_tab.gallery.player.stop()
+                start_update(ROOT, release)
+                self.root.destroy()
+            except (OSError, ValueError) as error:
+                messagebox.showerror("Atualização", str(error), parent=self.root)
 
     @staticmethod
     def field(frame, row, label, widget):
