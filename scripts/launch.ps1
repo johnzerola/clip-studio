@@ -4,5 +4,6 @@ Add-InstalledToolPaths
 $project = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $runtime = Join-Path $project '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $runtime)) { throw 'Execute Instalar.cmd primeiro.' }
+try { & (Join-Path $PSScriptRoot 'shortcut.ps1') -MigrateOnly } catch { Write-Warning $_.Exception.Message }
 & $runtime -X utf8 (Join-Path $project 'painel.py')
 exit $LASTEXITCODE

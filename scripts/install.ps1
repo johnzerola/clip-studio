@@ -49,21 +49,6 @@ if ($LASTEXITCODE -ne 0) { throw 'Dependências inconsistentes.' }
 & $runtime -X utf8 (Join-Path $PSScriptRoot 'check.py')
 if ($LASTEXITCODE -ne 0) { throw 'Falha na verificação de runtime.' }
 if (-not $Check -and -not $SkipShortcut) {
-    $desktop = [Environment]::GetFolderPath('DesktopDirectory')
-    if ($desktop -and (Test-Path -LiteralPath $desktop)) {
-        $destination = Join-Path $desktop 'Clip Studio.lnk'
-        $shell = New-Object -ComObject WScript.Shell
-        $shortcut = $shell.CreateShortcut($destination)
-        $newTarget = Join-Path $project 'Iniciar.cmd'
-        if ($shortcut.TargetPath -and $shortcut.TargetPath -ne $newTarget) {
-            $destination = Join-Path $desktop ('Clip Studio (' + (Split-Path $project -Leaf) + ').lnk')
-            $shortcut = $shell.CreateShortcut($destination)
-        }
-        $shortcut.TargetPath = $newTarget
-        $shortcut.WorkingDirectory = $project
-        $shortcut.Description = 'Capture, edite e revise clipes no Clip Studio'
-        $shortcut.Save()
-        Write-Host "Atalho: $destination"
-    }
+    & (Join-Path $PSScriptRoot 'shortcut.ps1')
 }
 Write-Host 'Clip Studio verificado. Para preparar o Ollama opcional, abra Configurar IA no painel.'

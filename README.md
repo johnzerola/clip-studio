@@ -1,6 +1,6 @@
-# Clip Studio
+# Codex · Edição de vídeo
 
-**Windows x64** · [Baixar o instalador do Cortex Clip Studio](https://github.com/johnzerola/clip-studio/releases/latest/download/Clip-Studio-Setup.exe) · [Conhecer o painel e a migração](docs/CORTEX-DESKTOP.md)
+**Windows x64** · [Baixar o instalador do Codex](https://github.com/johnzerola/clip-studio/releases/latest/download/Clip-Studio-Setup.exe) · [Conhecer o painel e a migração](docs/CORTEX-DESKTOP.md)
 
 **Transforme lives e gravações em cortes verticais para Shorts, TikTok e Reels.** Aplicativo Windows para acompanhar canais, escolher momentos, editar com legendas e revisar clipes antes de publicar.
 
@@ -34,7 +34,7 @@
 
 1. [Baixe o ZIP da versão mais recente](https://github.com/johnzerola/clip-studio/releases/latest/download/Clip-Studio-Windows.zip). Para baixar o código da branch atual, use **Code → Download ZIP**.
 2. Extraia todo o ZIP. Abra a pasta que contém **Instalar.cmd**, **Iniciar.cmd** e **README.md**. Prefira uma pasta sua, como `D:\Apps\Clip-Studio`.
-3. Execute **Instalar.cmd**. O instalador prepara as bibliotecas Python dentro do projeto e cria o atalho **Clip Studio** na Área de Trabalho.
+3. Execute **Instalar.cmd**. O instalador prepara as bibliotecas Python dentro do projeto e cria o atalho **Codex** na Área de Trabalho.
 4. Se o instalador pedir Python ou FFmpeg, abra o **Prompt de Comando** na pasta extraída e execute:
 
    ```bat

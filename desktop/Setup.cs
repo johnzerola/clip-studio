@@ -12,14 +12,14 @@ internal static class Setup {
         try {
             string parent;
             using (var choose = new FolderBrowserDialog()) {
-                choose.Description = "Onde deseja instalar o Cortex Clip Studio?";
+                choose.Description = "Onde deseja instalar o Codex de edição de vídeo?";
                 choose.SelectedPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
                 if (choose.ShowDialog() != DialogResult.OK) return;
                 parent = choose.SelectedPath;
             }
-            var target = Path.Combine(parent, "Cortex Clip Studio " + typeof(Setup).Assembly.GetName().Version.ToString(3));
+            var target = Path.Combine(parent, "Codex Video " + typeof(Setup).Assembly.GetName().Version.ToString(3));
             if (Directory.Exists(target)) { MessageBox.Show("Esta pasta já existe. Abra o aplicativo instalado ou escolha outra pasta."); return; }
-            using (var form = new Form { Text = "Instalar Clip Studio", Width = 500, Height = 150, StartPosition = FormStartPosition.CenterScreen, ControlBox = false }) {
+            using (var form = new Form { Text = "Instalar Codex", Width = 500, Height = 150, StartPosition = FormStartPosition.CenterScreen, ControlBox = false }) {
                 var label = new Label { Dock = DockStyle.Fill, TextAlign = System.Drawing.ContentAlignment.MiddleCenter, Text = "Extraindo o painel e as ferramentas de edição…" };
                 form.Controls.Add(label);
                 form.Shown += async delegate {
@@ -40,7 +40,7 @@ internal static class Setup {
                 };
                 Application.Run(form);
             }
-        } catch (Exception e) { MessageBox.Show(e.Message, "Clip Studio"); }
+        } catch (Exception e) { MessageBox.Show(e.Message, "Codex"); }
     }
     static void Extract(string target) {
         Directory.CreateDirectory(target);

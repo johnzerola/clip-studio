@@ -12,7 +12,7 @@ internal sealed class Studio : Form {
     const string Origin = "http://127.0.0.1:45839";
     readonly string root = AppDomain.CurrentDomain.BaseDirectory;
     readonly string token = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
-    readonly Label splash = new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, Text = "Abrindo o Cortex Studio…" };
+    readonly Label splash = new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, Text = "Abrindo o Codex…" };
     readonly Button classic = new Button { Dock = DockStyle.Bottom, Height = 42, Text = "Abrir painel clássico", Visible = false };
     readonly Timer timer = new Timer { Interval = 20 * 60 * 1000 };
     WebView2 view;
@@ -21,7 +21,7 @@ internal sealed class Studio : Form {
     static readonly string stateDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Cortex Clip Studio");
 
     Studio() {
-        Text = "Cortex · Clip Studio";
+        Text = "Codex · Edição de vídeo";
         Width = 1280; Height = 850; MinimumSize = new Size(820, 560);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(23, 23, 27);
@@ -199,7 +199,7 @@ internal sealed class Studio : Form {
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         using (var mutex = new System.Threading.Mutex(false, "Local\\CortexHookSparkWindow")) {
-            if (!mutex.WaitOne(0)) { MessageBox.Show("O Clip Studio já está aberto."); return; }
+            if (!mutex.WaitOne(0)) { MessageBox.Show("O painel web do Codex já está aberto."); return; }
             try { Application.Run(new Studio()); } finally { mutex.ReleaseMutex(); }
         }
     }

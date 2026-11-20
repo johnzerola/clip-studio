@@ -1,6 +1,6 @@
 @echo off
 setlocal
-if exist "%~dp0Clip Studio.exe" (
+if /I "%~1"=="--web" if exist "%~dp0Clip Studio.exe" (
     start "" "%~dp0Clip Studio.exe"
     if not errorlevel 1 exit /b 0
 )

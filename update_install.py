@@ -117,11 +117,13 @@ def install(request, notify):
         (destination / prefs.name).write_text(json.dumps(settings, ensure_ascii=False), encoding="utf-8")
     else:
         (destination / "preferencias.local.json").write_text(json.dumps({"output_dir": str(root / "resultados")}), encoding="utf-8")
-    # Mantém a conta OAuth protegida pelo Windows e o histórico da fila.
-    account = root / "work/youtube-account.dpapi"
-    if account.is_file():
-        (destination / "work").mkdir(exist_ok=True)
-        shutil.copy2(account, destination / "work" / account.name)
+    # Keep the protected OAuth token and the local editing criteria with the queue.
+    for relative in ("work/youtube-account.dpapi", "work/director-preferences.json", "criterios.local.json"):
+        existing = root / relative
+        if existing.is_file():
+            target = destination / relative
+            target.parent.mkdir(exist_ok=True)
+            shutil.copy2(existing, target)
     database = root / "work/jobs.sqlite3"
     if database.is_file():
         import sqlite3
@@ -136,18 +138,10 @@ def install(request, notify):
             stdout=output, stderr=subprocess.STDOUT, creationflags=flags)
     if result.returncode:
         raise RuntimeError("Instalação não concluída. Sua versão anterior permanece disponível. Registro: " + str(log))
-    # Atalho só muda depois que a nova instalação passou no diagnóstico.
-    shortcut_script = scratch / "shortcut.ps1"
-    shortcut_script.write_text("""param([string]$Project)
-$ErrorActionPreference='Stop'
-$w=New-Object -ComObject WScript.Shell
-$s=$w.CreateShortcut((Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Clip Studio.lnk'))
-$s.TargetPath=Join-Path $Project 'Iniciar.cmd'
-$s.WorkingDirectory=$Project
-$s.Save()
-""", encoding="utf-8-sig")
-    subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "RemoteSigned", "-File", str(shortcut_script), str(destination)], creationflags=flags, check=True)
-    notify("Atualização concluída. Abrindo o Clip Studio…")
+    # Point the shortcut at the new installation only after its runtime check.
+    subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "RemoteSigned", "-File",
+                    str(destination / "scripts/shortcut.ps1")], creationflags=flags, check=True)
+    notify("Atualização concluída. Abrindo o Codex…")
     os.startfile(destination / "Iniciar.cmd")
     return destination
 
@@ -159,7 +153,7 @@ def main():
     from tkinter import messagebox, ttk
     request = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     window = tk.Tk()
-    window.title("Atualização do Clip Studio")
+    window.title("Atualização do Codex")
     window.geometry("510x160")
     status = tk.StringVar(value="Preparando a atualização…")
     ttk.Label(window, textvariable=status, wraplength=470, padding=20).pack(fill="both", expand=True)

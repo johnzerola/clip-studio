@@ -1,6 +1,8 @@
-# Cortex Clip Studio para Windows
+# Codex de edição de vídeo para Windows
 
 O aplicativo x64 combina o painel React do Hook Spark, o motor de cortes V9 e os perfis aprovados do AI Video Director. No Windows 10 ou 11, baixe **Clip-Studio-Setup.exe** em [Releases](https://github.com/johnzerola/clip-studio/releases/latest). Ao abrir, escolha onde instalar. A preparação usa Python 3.13 x64, FFmpeg e o Microsoft Edge WebView2 Evergreen Runtime. O painel acompanha o pacote com uma cópia do Node. O primeiro preparo das dependências precisa de internet.
+
+O atalho **Codex** abre o painel de edição diretamente. A versão aparece no topo. Para usar a interface web da mesma instalação, execute `Iniciar.cmd --web`. As duas interfaces compartilham a fila e o motor V9.
 
 | Área | O que acontece |
 | --- | --- |

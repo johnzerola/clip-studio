@@ -165,7 +165,7 @@ class Panel:
         if migrate_broll:
             self.broll_selected.update(asset.key for asset in self.library_assets() if asset.group == "Minha pasta")
         self.update_broll_count()
-        root.title("Clip Studio • Lives, VODs e arquivos")
+        root.title("Codex • Edição de vídeo")
         tema.apply(root, self.appearance.get())
         root.geometry("1230x810")
         root.minsize(990, 700)
@@ -173,13 +173,15 @@ class Panel:
         shell.pack(fill="both", expand=True)
         sidebar = ttk.Frame(shell, style="Nav.TFrame", padding=(12, 17))
         sidebar.pack(side="left", fill="y")
-        ttk.Label(sidebar, text="Clip Studio", style="Brand.TLabel",
+        ttk.Label(sidebar, text="Codex", style="Brand.TLabel",
                   font=("Segoe UI Semibold", 20), padding=(8, 0, 10, 18)).pack(fill="x")
         workspace = ttk.Frame(shell)
         workspace.pack(side="left", fill="both", expand=True)
         top = ttk.Frame(workspace, padding=(18, 9))
         top.pack(fill="x")
         ttk.Label(top, textvariable=self.session_status, style="Muted.TLabel").pack(side="left")
+        from update_check import VERSION
+        ttk.Label(top, text=f"v{VERSION}", style="Muted.TLabel").pack(side="left", padx=10)
         from modelar_bridge import show_dialog
         ttk.Button(top, text="Modelar…", command=lambda: show_dialog(root, self.output_path)).pack(side="right", padx=8)
         theme_choice = ttk.Combobox(top, textvariable=self.appearance, values=tema.MODES,
@@ -525,7 +527,7 @@ class Panel:
     def offer_update(self, release):
         from update_install import start_update, select_assets
         tag = release.get("tag_name", "")
-        notes = str(release.get("body") or "Melhorias e correções do Clip Studio.")[:1800]
+        notes = str(release.get("body") or "Melhorias e correções do Codex.")[:1800]
         try:
             select_assets(release)
         except ValueError:
@@ -533,7 +535,7 @@ class Panel:
             self.update_seen.discard(tag)
             return
         if messagebox.askyesno("Atualização disponível",
-            f"Clip Studio {tag}\n\n{notes}\n\n"
+            f"Codex {tag}\n\n{notes}\n\n"
             "Atualizar agora? O painel será fechado, a atualização será instalada e o app abrirá novamente. "
             "A instalação anterior será preservada.", parent=self.root):
             try:
@@ -892,7 +894,34 @@ class Panel:
             self.events.put(None)
 
 
+def main():
+    import os
+    if os.name != "nt":
+        window = tk.Tk()
+        Panel(window)
+        window.mainloop()
+        return
+
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_mutex = kernel.CreateMutexW
+    create_mutex.argtypes = (wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR)
+    create_mutex.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    handle = create_mutex(None, False, r"Local\JohnZerolaCodexVideo")
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    already_open = ctypes.get_last_error() == 183
+    try:
+        if not already_open:
+            window = tk.Tk()
+            Panel(window)
+            window.mainloop()
+    finally:
+        kernel.CloseHandle(handle)
+
+
 if __name__ == "__main__":
-    window = tk.Tk()
-    Panel(window)
-    window.mainloop()
+    main()
