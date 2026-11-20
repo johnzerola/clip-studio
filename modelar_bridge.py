@@ -40,8 +40,8 @@ def load_profile(project, preset):
     return {"schema": "clip-modelar-reference-v1", "preset_sha256": hashlib.sha256(raw).hexdigest(),
             "analysis_id": str(record.get("analysisId", "")), "source_hashes": hashes,
             "reference_shot_seconds": target, "notes": str(record.get("notes", ""))[:2000],
-            "editing_engine": "clip-studio-v9", "rhythm_application": "review-only",
-            "limitations": "Ritmo é referência para revisão. Cor, tipografia e movimentos inferidos não são aplicados automaticamente."}
+            "editing_engine": "clip-studio-v9", "rhythm_application": "dynamic-framing",
+            "limitations": "O ritmo orienta trocas de enquadramento quando há facecam. O perfil não substitui a revisão editorial."}
 
 
 def make_request(profile, source, output, ranges=""):
@@ -50,7 +50,7 @@ def make_request(profile, source, output, ranges=""):
         raise ValueError("Escolha um vídeo local existente.")
     return {"sources": [str(media)], "output": str(Path(output).resolve()), "mode": "render",
             "performance": "leve", "style": "dynamic", "seconds": 90, "count": 1,
-            "ranges": ranges, "captions": True, "music": True, "review": True,
+            "ranges": ranges, "captions": True, "music": True, "review": True, "smart_reframe": True,
             "modelar_reference": profile}
 
 
@@ -66,7 +66,7 @@ def show_dialog(parent, output):
     def ready(profile):
         if not messagebox.askyesno("Modelar com Clip Studio V9",
             f"Referências verificadas. Ritmo observado: {profile['reference_shot_seconds']} s por plano.\n\n"
-            "O ritmo fica como orientação de revisão. A edição usa o motor V9 com legendas, trilha e acabamento.\n\n"
+            "O ritmo orienta as trocas de câmera do V9 quando o vídeo tem facecam.\n\n"
             "Escolher um vídeo e iniciar um corte no modo Leve?", parent=parent):
             return
         source = filedialog.askopenfilename(parent=parent, title="Vídeo para editar com V9",

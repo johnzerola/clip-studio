@@ -38,13 +38,22 @@ def evaluate(path, ff, run, expected, words, model, threshold, prior):
     if reason:
         return {"status": "rejected", "technical_ok": False, "threshold": threshold, "score": 0, "reason": reason}
 
+    has_audio = any(s["codec_type"] == "audio" for s in info["streams"])
+    transcript_source = "timeline"
+    if (model or vision_model) and has_audio:
+        from engine import transcribe
+        try:
+            words = transcribe(path, 0, duration, language=prior.get("speech_language", "auto"))
+            transcript_source = "render"
+        except (OSError, RuntimeError, subprocess.SubprocessError):
+            pass
     transcript = " ".join(w for _, _, w in words)
     tokens = re.findall(r"\w+", transcript.casefold())
     pace = len(tokens) / duration
     speech_seconds = sum(max(0., min(1., end - start)) for start, end, _ in words)
     variety = len(set(tokens)) / max(1, len(tokens))
     from engine import inspect
-    observations = inspect(path, duration, any(s["codec_type"] == "audio" for s in info["streams"]))
+    observations = inspect(path, duration, has_audio)
     movements = [row[1] for row in observations]
     audio_peaks = [row[0] for row in observations]
     final_motion = max(movements, default=0)
@@ -62,9 +71,10 @@ def evaluate(path, ff, run, expected, words, model, threshold, prior):
     narrative = 20 + min(24, pace * 13) + min(18, variety * 28) + 8 * opening
     sustained = sum(value >= 1.3 for value in movements) / max(1, len(movements))
     action = 16 + min(34, max(0, motion - .9) * 11) + min(22, preliminary * .32) + 12 * sustained
-    semantic = judge_local(model, transcript, {"phase": "edited", "duration": round(duration, 2),
-                           "word_count": len(tokens), "speech_seconds": round(speech_seconds, 1),
-                           "motion": round(motion, 2), "active_fraction": round(sustained, 2)}) if tokens else None
+    features = {"phase": "edited", "duration": round(duration, 2), "word_count": len(tokens),
+                "speech_seconds": round(speech_seconds, 1), "motion": round(motion, 2),
+                "active_fraction": round(sustained, 2)}
+    semantic = judge_local(model, transcript, features) if tokens and model != vision_model else None
     story_score = (.45 * narrative + .55 * semantic["score"] if semantic
                    else .62 * narrative + .38 * preliminary)
     # A short standalone line can score well, but it cannot carry a long quiet cut by itself.
@@ -76,10 +86,10 @@ def evaluate(path, ff, run, expected, words, model, threshold, prior):
     best = "ação" if action_score > story_score else "narrativa"
     score = min(100, max(0, round(max(story_score, action_score))))
     visual = None
-    if vision_model and score >= max(20, threshold-8):
+    if vision_model:
         images = []
         try:
-            for point in (.15, .50, .85):
+            for point in (.06, .50, .90):
                 jpg = run([*ff, "-ss", str(duration*point), "-threads", "1", "-i", str(path),
                            "-frames:v", "1", "-an", "-vf", "scale=180:320", "-c:v", "mjpeg",
                            "-threads", "1", "-f", "image2pipe", "pipe:1"], timeout=8)
@@ -89,9 +99,13 @@ def evaluate(path, ff, run, expected, words, model, threshold, prior):
             images = []
         if images:
             visual = judge_local(vision_model, transcript,
-                                 {"phase": "edited", "motion": round(motion,2), "sampled_frames": len(images)}, images)
+                                 {**features, "frame_order": "gancho, meio, desfecho", "sampled_frames": len(images)}, images)
             if visual:
-                score = max(0,min(100,score + max(-8,min(8,round((visual["score"]-score)*.20)))))
+                score = round(.70 * score + .30 * visual["score"])
+        if not visual and tokens and model and model == vision_model:
+            semantic = judge_local(model, transcript, features)
+            if semantic:
+                score = round(.75 * score + .25 * semantic["score"])
 
     return {"status": "ready" if score >= threshold else "rejected", "technical_ok": True,
             "threshold": threshold, "score": score, "narrative_rules": round(narrative),
@@ -100,4 +114,7 @@ def evaluate(path, ff, run, expected, words, model, threshold, prior):
             "final_motion": round(final_motion, 3), "final_audio_peak_ratio": round(max(audio_peaks, default=0), 3),
             "model": model if semantic else None,
             "visual": visual, "vision_model": vision_model if visual else None,
+            "review_engine": "ollama_visual" if visual else "ollama_texto" if semantic else "regras_locais",
+            "transcript_source": transcript_source,
+            "review_transcript": transcript[:1450],
             "semantic": semantic, "reason": "nota_suficiente" if score >= threshold else "abaixo_do_limiar"}

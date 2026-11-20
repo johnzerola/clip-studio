@@ -1,5 +1,7 @@
 # Clip Studio
 
+**Windows x64** · [Baixar o instalador do Cortex Clip Studio](https://github.com/johnzerola/clip-studio/releases/latest/download/Clip-Studio-Setup.exe) · [Conhecer o painel e a migração](docs/CORTEX-DESKTOP.md)
+
 **Transforme lives e gravações em cortes verticais para Shorts, TikTok e Reels.** Aplicativo Windows para acompanhar canais, escolher momentos, editar com legendas e revisar clipes antes de publicar.
 
 **Windows 10/11** · **Português** · **Código aberto sob MIT** · **v0.5.1**

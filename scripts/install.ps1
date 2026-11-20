@@ -1,4 +1,4 @@
-﻿param(
+param(
     [switch]$InstallPrerequisites,
     [switch]$InstallOllama,
     [switch]$SkipShortcut,
@@ -18,6 +18,7 @@ function Install-WithWinget([string]$id) {
 }
 
 Add-InstalledToolPaths
+& (Join-Path $project "desktop/prepare.ps1") -Check:$Check
 if (-not (Test-Path -LiteralPath $runtime)) {
     if ($Check) { throw 'Ambiente Python ausente. Execute Instalar.cmd.' }
     $python = Find-Python313

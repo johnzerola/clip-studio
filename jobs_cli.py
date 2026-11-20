@@ -17,7 +17,7 @@ STYLES = ("dynamic", "split", "reaction", "gamecam", "all")
 
 def prepare(request):
     from editorial import Cleanup
-    from engine import Options, live_source
+    from engine import CAPTURE_HEIGHTS, Options, live_source
     from live_scout import ScoutSettings
 
     raw = request.get("sources")
@@ -38,6 +38,15 @@ def prepare(request):
     count = int(request.get("count", 1))
     minutes = int(request.get("minutes", 5))
     threshold = int(request.get("threshold", 60))
+    language = request.get("speech_language", "auto")
+    capture_height = request.get("capture_height")
+    replay_height = request.get("replay_height", 1440)
+    if replay_height not in (1080, 1440):
+        raise ValueError("Escolha replays em Full HD (1080p) ou 2K (1440p).")
+    if capture_height is not None and capture_height not in CAPTURE_HEIGHTS:
+        raise ValueError("Escolha captura em 480p, 720p ou 1080p.")
+    modelar_reference = request.get("modelar_reference") or {}
+    target_shot_seconds = float(modelar_reference.get("reference_shot_seconds", 3.0))
     poll_hours = int(request.get("live_poll_hours", 1))
     if poll_hours not in (0, 1, 2, 3):
         raise ValueError("Escolha uma frequência de 0, 1, 2 ou 3 horas.")
@@ -58,13 +67,16 @@ def prepare(request):
                    transition="v9", compression="compacto", auto_music=bool(request.get("music", True)),
                    contextual_broll=False, keep_manual_edges=bool(manual), channel_handle=request.get("channel_handle") or "",
                    hook_text=request.get("hook_text") or "", effects_model=request.get("effects_model") or "",
-                   smart_reframe=bool(request.get("smart_reframe", False)))
+                   smart_reframe=bool(request.get("smart_reframe", False)), speech_language=language,
+                   target_shot_seconds=target_shot_seconds, full_hd=capture_height == 1080)
     scout = ScoutSettings(model=str(request.get("model") or ""), threshold=threshold, clip_seconds=duration,
                           review_final=bool(request.get("review", False)), continuous=minutes == 0,
                           catchup=bool(request.get("catchup", False)), performance=profile, live_poll_hours=poll_hours,
                           trim_inactive=bool(request.get("trim_inactive", True)),
                           transcribe_recordings=bool(request.get("transcribe_recordings", False)),
-                          vision_model=str(request.get("vision_model") or ""))
+                          vision_model=str(request.get("vision_model") or ""), speech_language=language,
+                          capture_height=capture_height, replay_after_live=bool(request.get("replay_after_live", False)),
+                          replay_height=replay_height)
     return sources, opts, minutes, 1, out, 0, scout
 
 
@@ -108,6 +120,10 @@ def main():
     create.add_argument("--minutes", type=int, default=5)
     create.add_argument("--ranges", default="")
     create.add_argument("--model", default="")
+    create.add_argument("--speech-language", choices=("auto", "pt", "en", "es"), default="auto")
+    create.add_argument("--capture-height", type=int, choices=(480, 720, 1080))
+    create.add_argument("--replay-after-live", action="store_true")
+    create.add_argument("--replay-height", type=int, choices=(1080, 1440), default=1440)
     create.add_argument("--live-poll-hours", choices=(0,1,2,3), default=1, type=int)
     create.add_argument("--transcribe-recordings", action="store_true")
     create.add_argument("--vision-model", default="")

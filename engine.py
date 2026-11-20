@@ -24,6 +24,12 @@ from compression import compress
 import runtime_profile as runtime
 
 WIDTH, HEIGHT = 720, 1280
+CAPTURE_HEIGHTS = (480, 720, 1080)
+LIVE_VARIANTS = "1080p60,1080p,936p60,936p,900p60,900p,864p60,864p,720p60,720p,540p,480p60,480p,360p,240p,160p".split(",")
+
+
+def live_variant_order(height):
+    return ",".join(name for name in LIVE_VARIANTS if int(name.split("p")[0]) <= height)
 FF = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin"]
 ENC = ["-pix_fmt", "yuv420p",
        "-c:a", "aac", "-ar", "48000", "-ac", "2", "-threads", "2"]
@@ -68,6 +74,13 @@ class Options:
     hook_text: str = ""
     effects_model: str = ""
     smart_reframe: bool = False
+    speech_language: str = "auto"
+    target_shot_seconds: float = 3.0
+    full_hd: bool = False
+
+    @property
+    def frame_size(self):
+        return (1080, 1920) if self.full_hd else (WIDTH, HEIGHT)
 
     def __post_init__(self):
         handle = self.channel_handle.strip()
@@ -77,6 +90,10 @@ class Options:
                 raise ValueError("Use até 30 caracteres no @ do canal. São aceitos letras, números, ponto, hífen e sublinhado.")
             handle = "@" + handle
         object.__setattr__(self, "channel_handle", handle)
+        if self.speech_language not in ("auto", "pt", "en", "es"):
+            raise ValueError("Idioma de fala inválido.")
+        if not 1.5 <= self.target_shot_seconds <= 5.2:
+            raise ValueError("Ritmo de câmera fora do intervalo suportado.")
 
 
 def command(args, **kwargs):
@@ -130,7 +147,7 @@ def detect_facecam(source, duration):
     return estimate(frames, width, height)
 
 
-def inspect(source, duration, audio, face="", *, normalized=True, start=0.):
+def inspect(source, duration, audio, face="", *, normalized=True, start=0., video=True):
     """Two-second samples. No rendering or speech model needed for this pass."""
     window = (["-ss", str(start), "-i", str(source), "-t", str(duration)]
               if start else ["-i", str(source), "-t", str(duration)])
@@ -142,7 +159,7 @@ def inspect(source, duration, audio, face="", *, normalized=True, start=0.):
     size = width * height
     frames = command(FF + ["-threads", "2", "-filter_threads", "1", *window,
                           "-an", "-vf", f"fps=1/2,scale={width}:{height},format=gray",
-                          "-c:v", "rawvideo", "-threads", "1", "-f", "rawvideo", "pipe:1"])
+                          "-c:v", "rawvideo", "-threads", "1", "-f", "rawvideo", "pipe:1"]) if video else b""
     face_pixels = set()
     if face:
         x, y, w, h = map(float, face.split(","))
@@ -222,23 +239,30 @@ def crop(region):
 
 
 def layout_graph(style, options, focus_x=None):
+    portrait_fill = options.smart_reframe and options.transition == "v9"
+    canvas_width, canvas_height = options.frame_size
+
+    def scale_units(pixels):
+        return round(pixels * canvas_width / WIDTH / 2) * 2
+
     def fit(region, width, height):
         return (crop(region) + f"scale={width}:{height}:force_original_aspect_ratio=decrease:"
                 f"force_divisible_by=2,setsar=1,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=0x101522")
     def game_canvas(source, target):
-        if focus_x is not None:
-            return (f"{source}scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase:"
-                    f"force_divisible_by=2,crop={WIDTH}:{HEIGHT}:(iw-ow)*{focus_x}:(ih-oh)/2,setsar=1{target}")
+        if focus_x is not None or portrait_fill:
+            anchor = .5 if focus_x is None else focus_x
+            return (f"{source}{crop(options.game)}scale={canvas_width}:{canvas_height}:force_original_aspect_ratio=increase:"
+                    f"force_divisible_by=2,crop={canvas_width}:{canvas_height}:(iw-ow)*{anchor}:(ih-oh)/2,setsar=1{target}")
         return (f"{source}{crop(options.game)}split=2[back][play];"
                 f"[back]scale=180:320:force_original_aspect_ratio=increase:force_divisible_by=2,"
                 f"crop=180:320,gblur=sigma=12,drawbox=c=black@0.24:t=fill,"
-                f"scale={WIDTH}:{HEIGHT},setsar=1[blur];"
-                f"[play]scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=decrease:"
+                f"scale={canvas_width}:{canvas_height},setsar=1[blur];"
+                f"[play]scale={canvas_width}:{canvas_height}:force_original_aspect_ratio=decrease:"
                 f"force_divisible_by=2,setsar=1[active];"
                 f"[blur][active]overlay=(W-w)/2:(H-h)/2{target}")
     def fill(region, height):
-        return (crop(region) + f"scale={WIDTH}:{height}:force_original_aspect_ratio=increase:"
-                f"force_divisible_by=2,crop={WIDTH}:{height},setsar=1")
+        return (crop(region) + f"scale={canvas_width}:{height}:force_original_aspect_ratio=increase:"
+                f"force_divisible_by=2,crop={canvas_width}:{height},setsar=1")
     focus = options.close_focus
     v9_close = options.polish and options.transition == "v9"
     visible_width = (.85 if v9_close else 1) - (.24 if v9_close else .30) * abs(2 * focus - 1)
@@ -246,32 +270,38 @@ def layout_graph(style, options, focus_x=None):
                   if v9_close or focus != .5 else "")
 
     def face_canvas(source, target):
+        if portrait_fill:
+            return (f"{source}{crop(options.face)}scale={canvas_width}:{canvas_height}:force_original_aspect_ratio=increase:"
+                    f"force_divisible_by=2,crop={canvas_width}:{canvas_height}:(iw-ow)*{focus}:(ih-oh)/2,setsar=1{target}")
         return (f"{source}{crop(options.face)}split=2[facebg][facefg];"
                 f"[facebg]scale=180:320:force_original_aspect_ratio=increase:force_divisible_by=2,"
                 f"crop=180:320:(iw-ow)*{focus},gblur=sigma=14,drawbox=c=black@0.30:t=fill,"
-                f"scale={WIDTH}:{HEIGHT},setsar=1[soft];"
-                f"[facefg]{face_focus}scale={WIDTH}:850:flags=lanczos:force_original_aspect_ratio=decrease:"
+                f"scale={canvas_width}:{canvas_height},setsar=1[soft];"
+                f"[facefg]{face_focus}scale={canvas_width}:{scale_units(850)}:flags=lanczos:force_original_aspect_ratio=decrease:"
                 f"force_divisible_by=2,setsar=1[talent];"
-                f"[soft][talent]overlay=(W-w)/2:175{target}")
+                f"[soft][talent]overlay=(W-w)/2:{round(175 * canvas_width / WIDTH)}{target}")
     if style == "gamecam":
-        x = "W-w-22" if options.corner == "direito" else "22"
+        margin = scale_units(22)
+        x = f"W-w-{margin}" if options.corner == "direito" else str(margin)
+        side = scale_units(196)
         circle = ("format=yuva444p,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':"
                   "a='if(lte((X-W/2)*(X-W/2)+(Y-H/2)*(Y-H/2),(W/2-2)*(W/2-2)),255,0)'")
-        camera = (crop(options.face) + "scale=196:196:force_original_aspect_ratio=increase:"
-                  f"force_divisible_by=2,crop=196:196:(iw-ow)*{focus}:(ih-oh)/2,setsar=1," + circle)
+        camera = (crop(options.face) + f"scale={side}:{side}:force_original_aspect_ratio=increase:"
+                  f"force_divisible_by=2,crop={side}:{side}:(iw-ow)*{focus}:(ih-oh)/2,setsar=1," + circle)
         return (f"[0:v]split=2[f][g];{game_canvas('[g]', '[main]')};"
-                f"[f]{camera}[cam];[main][cam]overlay={x}:190[base]")
+                f"[f]{camera}[cam];[main][cam]overlay={x}:{scale_units(190)}[base]")
     if style == "split":
         if options.look == "shorts":
-            return (f"[0:v]split=2[f][g];[f]{fill(options.face, 500)}[top];"
-                    f"[g]{fill(options.game, 780)}[bottom];[top][bottom]vstack[base]")
-        return (f"[0:v]split=2[f][g];[f]{fit(options.face, WIDTH, 440)}[top];"
-                f"[g]{fit(options.game, WIDTH, 840)}[bottom];[top][bottom]vstack[base]")
+            return (f"[0:v]split=2[f][g];[f]{fill(options.face, scale_units(500))}[top];"
+                    f"[g]{fill(options.game, scale_units(780))}[bottom];[top][bottom]vstack[base]")
+        return (f"[0:v]split=2[f][g];[f]{fit(options.face, canvas_width, scale_units(440))}[top];"
+                f"[g]{fit(options.game, canvas_width, scale_units(840))}[bottom];[top][bottom]vstack[base]")
     if style == "reaction":
-        x = "W-w-28" if options.corner == "direito" else "28"
+        margin = scale_units(28)
+        x = f"W-w-{margin}" if options.corner == "direito" else str(margin)
         return (f"[0:v]split=2[f][g];{face_canvas('[f]', '[main]')};"
-                f"[g]{fit(options.game, 272, 156)},drawbox=color=white@0.8:t=2[pip];"
-                f"[main][pip]overlay={x}:92[base]")
+                f"[g]{fit(options.game, scale_units(272), scale_units(156))},drawbox=color=white@0.8:t=2[pip];"
+                f"[main][pip]overlay={x}:{scale_units(92)}[base]")
     if style == "face":
         return face_canvas("[0:v]", "[base]")
     return game_canvas("[0:v]", "[base]")
@@ -284,12 +314,15 @@ def layouts(signals, start, end, options, words=(), signal_offset=0):
         return [(start, end, options.style)]
     segments = []
     point = start
+    target = options.target_shot_seconds
+    earliest = max(1.4, target - 1.1)
+    latest = target + .7
     while point < end - .01:
         v9 = options.transition == "v9"
-        if v9 and end - point > 3.7:
-            desired = point + 3.
+        if v9 and end - point > latest:
+            desired = point + target
             # Prefer a complete phrase or a natural gap over cutting the framing mid-word.
-            possible = [b for i, (_, b, text) in enumerate(words) if point + 1.9 <= b <= point + 3.7
+            possible = [b for i, (_, b, text) in enumerate(words) if point + earliest <= b <= point + latest
                         and (text.endswith((".", "!", "?")) or
                              (i + 1 < len(words) and words[i + 1][0] - b >= .22))]
             stop = min(possible, key=lambda moment: abs(moment - desired)) if possible else desired
@@ -328,7 +361,7 @@ def stamp(seconds):
     return f"{ticks // 360000}:{ticks // 6000 % 60:02}:{ticks // 100 % 60:02}.{ticks % 100:02}"
 
 
-def transcribe(source, start, end, model=None):
+def transcribe(source, start, end, model=None, *, language="auto"):
     import numpy as np
     from faster_whisper import WhisperModel
     from huggingface_hub.errors import LocalEntryNotFoundError
@@ -352,7 +385,8 @@ def transcribe(source, start, end, model=None):
                 whisper = WhisperModel(model, **config)
             MODELS[model] = (threads, whisper)
         segments, _ = MODELS[model][1].transcribe(samples, word_timestamps=True, vad_filter=True,
-                                               beam_size=1 if model == "tiny" else 5)
+                                               beam_size=1 if model == "tiny" else 5,
+                                               language=None if language == "auto" else language)
         return [(float(start + w.start), float(start + w.end), w.word.strip())
                 for s in segments for w in (s.words or []) if w.word.strip()]
 
@@ -443,6 +477,7 @@ def render_clip(source, destination, shots, words, options, hook="", timing_word
 
 
 def _render_clip(source, destination, shots, words, options, scratch, hook, timing_words):
+    width, height = options.frame_size
     from audio_finish import loudness_filter, make_mix, program
 
     from v9_finish import contextual_card, music_bed
@@ -495,7 +530,7 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
             amount = .065 if highlight_punch else .045
             # Anchor the reframe in the portrait, including the split's upper panel.
             anchor = (.50, .38 if style == "split" else .43)
-            graph += camera_move(layer, "[punch]", frames, amount, anchor)
+            graph += camera_move(layer, "[punch]", frames, amount, anchor, size=(width, height))
             punches.append({"shot": index + 1, "zoom": 1 + amount, "anchor": anchor,
                             "attack_frames": 8, "return_frames": 10 if frames >= 42 else 0})
             layer = "[punch]"
@@ -503,7 +538,7 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
             amount = .09 if highlight_punch else .04
             punches.append({"shot": index + 1, "zoom": 1+amount, "return_frames": 0})
             graph += (f";{layer}fps=30,zoompan=z='1+{amount}*(1-exp(-on/4))':"
-                      "x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s=720x1280:fps=30[punch]")
+                      f"x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s={width}x{height}:fps=30[punch]")
             layer = "[punch]"
         if options.polish and options.transition == "linha" and index in accents:
             graph += edge_transition(layer, "[transition]")
@@ -516,8 +551,8 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
                       ["-stream_loop", "-1"]) + ["-i", str(asset)]
             if insert_full:
                 graph += (";[1:v]fps=30,trim=duration=1.15,setpts=PTS-STARTPTS,"
-                          "scale=720:1280:force_original_aspect_ratio=increase:force_divisible_by=2,"
-                          f"crop=720:1280,setsar=1,setpts=PTS+{at:.3f}/TB[detail];"
+                          f"scale={width}:{height}:force_original_aspect_ratio=increase:force_divisible_by=2,"
+                          f"crop={width}:{height},setsar=1,setpts=PTS+{at:.3f}/TB[detail];"
                           f"{layer}[detail]overlay=0:0:eof_action=pass:"
                           f"enable='gte(t,{at:.3f})*lt(t,{at+1.15:.3f})'[inserted]")
             else:
@@ -665,7 +700,8 @@ def process(source, folder, options, log, *, screening=None, staging_dir=None, o
         shared_words = None
         if audio and cleanup.speech and not options.manual:
             log("Transcrevendo a fala para ajustar os cortes às frases.")
-            shared_words = transcribe(source, max(0, parts[0][0] - 3), min(total, parts[-1][1] + 3))
+            shared_words = transcribe(source, max(0, parts[0][0] - 3), min(total, parts[-1][1] + 3),
+                                      language=options.speech_language)
             parts = refine_montage(parts, shared_words, total)
         kept, removals, transcript = [], [], []
         range_signals = {}
@@ -676,7 +712,7 @@ def process(source, folder, options, log, *, screening=None, staging_dir=None, o
                                                    or options.hook or options.effects_model or options.broll_dir or options.broll_assets or screening
                                                    or (options.render and options.captions)):
                 log(f"Transcrevendo o trecho de {low:.1f}s a {high:.1f}s.")
-                words = transcribe(source, low, high)
+                words = transcribe(source, low, high, language=options.speech_language)
             edits = list(transcript_edits(words, cleanup))
             if options.trim_inactive:
                 bins = inspect(source, high-low, audio, options.face, start=low, normalized=False)
@@ -748,12 +784,16 @@ def process(source, folder, options, log, *, screening=None, staging_dir=None, o
                     from final_screen import evaluate
                     log(f"Revisão técnica e editorial: {destination.name}.")
                     model, threshold, prior = screening
+                    prior = {**prior, "speech_language": options.speech_language}
                     verdict = evaluate(publish, FF, command, sum(b - a for a, b, _ in shots),
                                        words, model, threshold, prior)
                     verdict["duration"] = sum(b - a for a, b, _ in shots)
                     verdict["source"] = str(original_source)
-                    verdict["studio_transcript"] = " ".join(word for _, _, word in words)[:1450]
-                    verdict["ranges"] = [(part["start"], part["end"]) for part in entry["parts"]]
+                    verdict["studio_transcript"] = verdict.pop("review_transcript", " ".join(word for _, _, word in words)[:1450])
+                    offset = prior.get("origin_offset", 0)
+                    verdict["ranges"] = [(part["start"] + offset, part["end"] + offset) for part in entry["parts"]]
+                    if "origin_url" in prior:
+                        verdict["origin_url"] = prior["origin_url"]
                     variant["screening"] = verdict
                     report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
                     if verdict["status"] != "ready":
@@ -764,7 +804,7 @@ def process(source, folder, options, log, *, screening=None, staging_dir=None, o
                     publish.replace(destination)
                     if on_review:
                         on_review(destination, destination, verdict, words, hook)
-                    log(f"Aprovado depois da edição: {verdict['score']}/100.")
+                    log(f"Aprovado depois da edição: {verdict['score']}/100 ({verdict.get('review_engine', 'regras_locais')}).")
             finally:
                 if screening is not None:
                     publish.unlink(missing_ok=True)
@@ -839,14 +879,15 @@ class BroadcastEnded(Exception):
     """The provider confirmed the broadcast ended."""
 
 
-def extractor_live_media(python, url):
+def extractor_live_media(python, url, capture_height=None):
     is_x = urlparse(url).hostname in X_HOSTS
     platform = "X" if is_x else "TikTok"
     try:
         raw = command([python, "-m", "yt_dlp", "--ignore-config", "--compat-options", "no-certifi",
                        "--no-playlist", "--no-warnings",
                        "--socket-timeout", "12", "--extractor-retries", "0", "--dump-single-json",
-                       "-f", "b[height<=720]/b", "--", url], timeout=25)
+                       "-f", f"b[height<={capture_height}]" if capture_height else "b[height<=720]/b",
+                       "--", url], timeout=25)
     except RuntimeError as error:
         if is_x and "broadcast no longer exists" in str(error).casefold():
             raise BroadcastEnded("O X informou que esta transmissão não está mais disponível.") from error
@@ -934,7 +975,8 @@ def capture_space(folder):
 
 
 def capture(python, url, folder, minutes, schedule, stop, log, wait_minutes=0, segment_seconds=120,
-            *, continuous=False, catchup=False, offline_seconds=45, on_state=None):
+            *, continuous=False, catchup=False, offline_seconds=45, on_state=None, capture_height=None,
+            discard_short=False, on_ended=None):
     """Wait for a live source and optionally return to watching between broadcasts."""
     ready_by = time.monotonic() + wait_minutes * 60
     deadline = None
@@ -957,9 +999,11 @@ def capture(python, url, folder, minutes, schedule, stop, log, wait_minutes=0, s
         try:
             found = capture_once(python, url, target, seconds, schedule, stop, log, segment_seconds,
                                  catchup=catchup and (last_media is None or started - last_media >= 180),
-                                 on_state=on_state)
+                                 on_state=on_state, capture_height=capture_height, discard_short=discard_short)
         except BroadcastEnded as error:
             log(str(error))
+            if on_ended and not stop.is_set():
+                on_ended()
             return
         except (RuntimeError, ValueError, OSError, sp.TimeoutExpired) as error:
             found = False
@@ -973,6 +1017,11 @@ def capture(python, url, folder, minutes, schedule, stop, log, wait_minutes=0, s
         if stop.is_set() or (deadline and now >= deadline - 2):
             return
         retry_until = last_media + 70 if last_media is not None else ready_by
+        if last_media is not None and now >= retry_until and not found:
+            if on_ended:
+                on_ended()
+            if continuous:
+                last_media = None
         if continuous:
             # Empty attempts contain diagnostics only; retain the current one without
             # letting idle checks create directories indefinitely.
@@ -1002,7 +1051,8 @@ def capture(python, url, folder, minutes, schedule, stop, log, wait_minutes=0, s
         stop.wait(min(20, max(0, retry_until - now)))
 
 
-def capture_once(python, url, folder, seconds, schedule, stop, log, segment_seconds, *, catchup=False, on_state=None):
+def capture_once(python, url, folder, seconds, schedule, stop, log, segment_seconds, *,
+                 catchup=False, on_state=None, capture_height=None, discard_short=False):
     """Own the capture processes and send only segments closed by FFmpeg."""
     found = False
     position = 0
@@ -1028,20 +1078,28 @@ def capture_once(python, url, folder, seconds, schedule, stop, log, segment_seco
                 minimum = 2 if segment_seconds <= 30 else 8
                 if path.stat().st_size and float(row[2]) - float(row[1]) >= minimum:
                     schedule(path, folder / path.stem)
+                elif discard_short:
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError as error:
+                        log(f"Limpeza de bloco curto {path.name}: {error}")
 
     host = urlparse(url).netloc.lower()
     direct = host in X_HOSTS | TIKTOK_HOSTS
     dvr = catchup and not direct
     latency = (["--hls-live-restart", "--stream-segment-threads", str(runtime.active.dvr_threads)] if dvr else
                ["--twitch-low-latency"] if host == "www.twitch.tv" else [])
-    input_args = extractor_live_media(python, url) if direct else ["-i", "pipe:0"]
+    quality = runtime.active.quality
+    if capture_height:
+        quality = live_variant_order(capture_height)
+    input_args = extractor_live_media(python, url, capture_height) if direct else ["-i", "pipe:0"]
     if stop.is_set():
         return False
     if dvr:
         log(f"Recuperando o início ainda disponível na janela pública de {url}.")
     with (folder / "captura.log").open("wb") as errors:
         sl = None if direct else sp.Popen(streamlink_cli(python) + ["--stdout", *latency,
-                                      "--loglevel", "warning", url, runtime.active.quality],
+                                      "--loglevel", "warning", url, quality],
                                      stdout=sp.PIPE, stderr=errors, **runtime.child_options())
         ff = None
         try:

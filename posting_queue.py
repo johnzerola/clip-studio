@@ -146,7 +146,9 @@ def enqueue(folder, candidate, media, verdict, transcript, hook, model):
     words = tokens(transcript)
     visual = media_signature(media, duration) if media and len(words) < 14 else []
     source = ""
-    if media and verdict.get("source"):
+    if media and verdict.get("origin_url"):
+        source = hashlib.sha256(verdict["origin_url"].encode()).hexdigest()
+    elif media and verdict.get("source"):
         original = Path(verdict["source"])
         try:
             stat = original.stat()
@@ -169,7 +171,8 @@ def enqueue(folder, candidate, media, verdict, transcript, hook, model):
         db.execute("INSERT OR REPLACE INTO clip_reviews VALUES (?,?)",
                    (key, json.dumps({field: verdict[field] for field in
                                      ("reason","review_path","narrative_rules","action_rules","model",
-                                      "semantic","visual","vision_model","speech_seconds","final_motion","threshold","studio_transcript") if field in verdict},
+                                      "semantic","visual","vision_model","speech_seconds","final_motion","threshold","studio_transcript",
+                                      "review_engine","transcript_source","origin_url","ranges") if field in verdict},
                                     ensure_ascii=False)))
         if media:
             register_similarity(db, key, words, duration, visual, source, verdict.get("ranges", ()))

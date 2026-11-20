@@ -83,10 +83,13 @@ class Panel:
         self.look = tk.StringVar(value="Shorts GTA")
         self.hook = tk.BooleanVar(value=True)
         self.scout_live = tk.BooleanVar(value=True)
-        self.scout_model = tk.StringVar(value="qwen3:4b")
-        self.vision_model = tk.StringVar()
+        self.scout_model = tk.StringVar(value="qwen3.5:4b")
+        self.vision_model = tk.StringVar(value="qwen3.5:4b")
         self.scout_threshold = tk.IntVar(value=60)
         self.scout_cleanup = tk.BooleanVar(value=True)
+        self.capture_quality = tk.StringVar(value="HD · 720p")
+        self.replay_after_live = tk.BooleanVar(value=True)
+        self.replay_height = tk.IntVar(value=1440)
         self.trim_live = tk.BooleanVar(value=True)
         self.scout_review = tk.BooleanVar(value=True)
         self.scout_continuous = tk.BooleanVar(value=True)
@@ -131,8 +134,8 @@ class Panel:
             "appearance", "review_layout", "preset", "style", "corner", "face", "game", "duration", "count", "minutes", "workers", "performance",
             "captions", "channel_handle", "creative_effects", "smart_reframe", "montage", "silence", "repeats", "fillers", "speech", "pause", "noise", "auto_face",
             "speech_gaps", "wait_minutes", "output_dir", "look", "hook", "polish", "broll_dir", "close_focus",
-            "scout_live", "scout_model", "vision_model", "scout_threshold", "scout_cleanup", "scout_review",
-            "scout_continuous", "scout_catchup", "compression", "trim_live",
+            "scout_live", "scout_model", "vision_model", "scout_threshold", "scout_cleanup", "scout_review", "capture_quality",
+            "scout_continuous", "scout_catchup", "compression", "trim_live", "replay_after_live", "replay_height",
             "replay_count", "replay_period", "replay_only", "replay_gib", "live_poll_hours", "recording_transcript",
             "voice_polish", "music_mode", "music", "music_db", "transition", "sfx", "sfx_peak")}
         source_text = ""
@@ -381,6 +384,9 @@ class Panel:
         ttk.Label(monitor_options, text="Buscar nova live a cada (h)").pack(side="left", padx=(12, 4))
         ttk.Combobox(monitor_options, values=(0, 1, 2, 3), textvariable=self.live_poll_hours,
                      width=4, state="readonly").pack(side="left")
+        ttk.Label(monitor_options, text="Qualidade").pack(side="left", padx=(12, 4))
+        ttk.Combobox(monitor_options, values=("Econômica · 480p", "HD · 720p", "Full HD · 1080p"),
+                     textvariable=self.capture_quality, width=17, state="readonly").pack(side="left")
         ttk.Label(bank, text="Pico (dBFS)").pack(side="left", padx=(8, 0))
         ttk.Spinbox(bank, textvariable=self.sfx_peak, from_=-24, to=-3, width=4).pack(side="left", padx=4)
         ttk.Label(bank, text="Volume da trilha (dB)").pack(side="left", padx=(12, 3))
@@ -389,11 +395,17 @@ class Panel:
         storage.grid(row=10, columnspan=5, sticky="w", pady=(4, 0))
         ttk.Checkbutton(storage, text="Tentar incluir o início da live", variable=self.scout_catchup).pack(side="left")
         ttk.Checkbutton(storage, text="Liberar espaço após exportar", variable=self.scout_cleanup).pack(side="left", padx=8)
+        ttk.Checkbutton(storage, text="Analisar o replay ao fim da live", variable=self.replay_after_live).pack(side="left", padx=8)
         ttk.Label(storage, text="Limite por gravação (GB)").pack(side="left")
         ttk.Combobox(storage, values=(3, 6, 12, 24, 48), textvariable=self.replay_gib, width=4,
                      state="readonly").pack(side="left", padx=4)
         ttk.Label(auto_tab, text="Lives que já terminaram",
                   font=("Segoe UI Semibold", 10)).grid(row=2, column=0, sticky="w", pady=(10, 0))
+        replay_quality = ttk.Frame(auto_tab)
+        replay_quality.grid(row=2, column=1, columnspan=4, sticky="w", pady=(10, 0))
+        ttk.Label(replay_quality, text="Qualidade dos trechos (p)").pack(side="left")
+        ttk.Combobox(replay_quality, values=(1440, 1080), textvariable=self.replay_height,
+                     width=6, state="readonly").pack(side="left", padx=6)
         archive = ttk.Frame(auto_tab)
         archive.grid(row=3, columnspan=5, sticky="w", pady=(4, 0))
         for label, variable, values, width in (
@@ -789,6 +801,8 @@ class Panel:
                 raise ValueError("Escolha um arquivo de trilha existente.")
             if not -45 <= music_db <= -12:
                 raise ValueError("Use volume da trilha entre -45 e -12 dB.")
+            capture_height = {"Econômica · 480p": 480, "HD · 720p": 720, "Full HD · 1080p": 1080}.get(
+                self.capture_quality.get(), 720)
             scout = ScoutSettings(self.scout_live.get(), self.scout_model.get().strip(),
                                   self.scout_threshold.get(), self.scout_cleanup.get(), duration,
                                   review_final=self.scout_review.get() and render,
@@ -798,7 +812,9 @@ class Panel:
                                   replay_gib=self.replay_gib.get(), live_poll_hours=self.live_poll_hours.get(),
                                   performance=next(key for key,p in PROFILES.items() if p.label == self.performance.get()),
                                   trim_inactive=self.trim_live.get(), vision_model=self.vision_model.get().strip(),
-                                  transcribe_recordings=self.recording_transcript.get(), autopilot=self.autopilot)
+                                  transcribe_recordings=self.recording_transcript.get(), autopilot=self.autopilot,
+                                  capture_height=capture_height, replay_after_live=self.replay_after_live.get(),
+                                  replay_height=self.replay_height.get())
             if scout.replay_count or scout.replay_period or scout.replay_only:
                 from replay_library import archive_url
                 if not lives or scout.replay_count not in (2, 3) or scout.replay_period not in (0, 1, 2, 3):
@@ -820,7 +836,7 @@ class Panel:
                               broll_assets=broll_assets, contextual_broll=False, channel_handle=self.channel_handle.get(),
                               hook_text=self.hook_text.get(),
                               effects_model=self.scout_model.get().strip() if self.creative_effects.get() else "",
-                              smart_reframe=self.smart_reframe.get(),
+                              smart_reframe=self.smart_reframe.get(), full_hd=bool(lives and capture_height == 1080),
                               auto_music=self.music_mode.get() == MUSIC_MODES[0],
                               keep_manual_edges=bool(manual and not lives and sources[0][1] == "file"
                                                      and self.visual_trim == (Path(sources[0][0]), self.manual.get())))

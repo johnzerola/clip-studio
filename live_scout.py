@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 
 from engine import FF, command, inspect, probe, transcribe
 from decision_bank import record
-from viral_rank import candidates, judge_local, rank_chat
+from viral_rank import candidates, has_chat_reaction, judge_local, rank_chat
 import runtime_profile as runtime
 
 INFERENCE = {False: threading.BoundedSemaphore(2), True: threading.BoundedSemaphore(1)}
@@ -45,6 +45,10 @@ class ScoutSettings:
     vision_model: str = ""
     transcribe_recordings: bool = False
     autopilot: object = field(default=None, repr=False)
+    speech_language: str = "auto"
+    capture_height: int | None = None
+    replay_after_live: bool = False
+    replay_height: int = 1440
 
 
 class TwitchPulse:
@@ -91,7 +95,9 @@ class TwitchPulse:
                                     with self.lock:
                                         sender = line.split(b"!", 1)[0].lstrip(b":")
                                         user = hashlib.blake2b(sender, key=self.salt, digest_size=6).digest()
-                                        self.messages.append((time.monotonic(), user))
+                                        body = line.partition(b" PRIVMSG #")[2].partition(b" :")[2]
+                                        self.messages.append((time.monotonic(), user,
+                                                              has_chat_reaction(body.decode("utf-8", errors="replace"))))
                                 elif b"Login authentication failed" in line:
                                     self.log("Chat Twitch anônimo recusado; análise segue sem chat.")
                                     return
@@ -104,11 +110,13 @@ class TwitchPulse:
 
     def measure(self, end, seconds):
         with self.lock:
-            current = [person for t, person in self.messages if end - seconds <= t <= end]
-            before = sum(1 for t, _person in self.messages if end - seconds - 90 <= t < end - seconds)
+            current = [(person, reaction) for t, person, reaction in self.messages if end - seconds <= t <= end]
+            before = sum(1 for t, _, _ in self.messages if end - seconds - 90 <= t < end - seconds)
         now = len(current)
         ratio = (now / max(seconds, 1)) / max(.08, before / 90)
-        return now, round(min(5., ratio), 2), len(set(current))
+        participants = {person for person, _ in current}
+        reactions = {person for person, reaction in current if reaction}
+        return now, round(min(5., ratio), 2), len(participants), len(reactions)
 
 
 class YouTubePulse(TwitchPulse):
@@ -151,7 +159,8 @@ class YouTubePulse(TwitchPulse):
                     at = datetime.fromisoformat(snippet["publishedAt"]).timestamp()
                     if -3 <= now-at <= 120:
                         user = hashlib.blake2b(who.encode(), key=self.salt, digest_size=6).digest()
-                        additions.append((min(monotonic, monotonic - (now-at)), user))
+                        additions.append((min(monotonic, monotonic - (now-at)), user,
+                                          has_chat_reaction(snippet.get("displayMessage") or "")))
                 with self.lock:
                     self.messages.extend(additions)
                 if result.get("offlineAt") or not result.get("nextPageToken"):
@@ -211,9 +220,13 @@ class LiveScout:
 
     def close(self):
         self.finished.set()
-        self.worker.join()
         if self.chat:
             self.chat.stop.set()
+        self.worker.join()
+        if self.settings.clean:
+            # The recorder has stopped. This also catches a tail without a CSV entry.
+            for path in self.root.glob("conexao_*/live_*.ts"):
+                self.release(path)
 
     def run(self):
         runtime.lower_worker_priority()
@@ -242,7 +255,8 @@ class LiveScout:
             features = inspect(path, seconds, audio, normalized=False)
             quiet = runtime.active.quiet_pass and features and all(rms < 100 and motion < 2
                                                                   for rms, motion, _ in features)
-            words = transcribe(path, 0, seconds, model="tiny") if audio and not quiet else []
+            words = (transcribe(path, 0, seconds, model="tiny", language=self.settings.speech_language)
+                     if audio and not quiet else [])
             if audio and quiet:
                 self.log(f"{path.name}: áudio baixo e imagem estável. Triagem preservou o tempo sem transcrever.")
         previous = self.last_segment
@@ -282,6 +296,7 @@ class LiveScout:
         pick = rank_chat(picks, duration, arrival, measure)[0]
         start, end = pick["start"], pick["end"]
         count, ratio, people, bonus = pick["chat"]
+        reactions = pick["features"]["chat_reactors"]
         pick["features"].update(chat_messages=count, chat_ratio=ratio, chat_people=people)
         score = min(100, pick["av_score"] + bonus)
         verdict = None
@@ -299,7 +314,8 @@ class LiveScout:
         from uuid import uuid4
         key = f"candidato_{time.strftime('%H%M%S')}_{uuid4().hex[:6]}"
         result = {"id": key, "raw_score": score, "score": combined, "accepted": accepted, "chat_messages": count,
-                  "chat_ratio": ratio, "chat_people": people, "chat_bonus": bonus, "chat_connected": bool(self.chat and self.chat.active),
+                  "chat_ratio": ratio, "chat_people": people, "chat_reactors": reactions, "chat_bonus": bonus,
+                  "chat_connected": bool(self.chat and self.chat.active),
                   "chat_aligned": bool(self.chat and near_realtime), "signals": pick["features"],
                   "selected_range": [start, end], "judge_status": judge_status,
                   "preliminary_threshold": preliminary_threshold,
@@ -333,14 +349,20 @@ class LiveScout:
         listing = capture_dir / f"{key}.ffconcat"
         target = self.root / f"{key}.mp4"
         partial = target.with_suffix(".partial.mp4")
+        manifest = target.with_suffix(".json")
+        handed_off = False
         try:
             listing.write_text("".join(f"file '{item[0].name}'\n" for item in window), encoding="ascii")
             command(FF + ["-y", "-f", "concat", "-safe", "1", "-i", str(listing), "-map", "0:v:0",
                           "-map", "0:a:0?", "-c", "copy", "-movflags", "+faststart", str(partial)])
             partial.replace(target)
-            target.with_suffix(".json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+            manifest.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
             enqueued = self.schedule(target, target.with_suffix(""), tuple(result["selected_range"]))
-            return enqueued if isinstance(enqueued, Path) else target if enqueued is not False else None
+            handed_off = enqueued is not False
+            return enqueued if isinstance(enqueued, Path) else target if handed_off else None
         finally:
             listing.unlink(missing_ok=True)
             partial.unlink(missing_ok=True)
+            if self.settings.clean and not handed_off:
+                target.unlink(missing_ok=True)
+                manifest.unlink(missing_ok=True)

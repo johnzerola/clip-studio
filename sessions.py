@@ -6,6 +6,7 @@ import re
 import sys
 import threading
 import time
+from tempfile import TemporaryDirectory
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -14,9 +15,9 @@ from uuid import uuid4
 from urllib.parse import urlsplit
 
 from decision_bank import record_final
-from engine import capture, fetch_vod, process, probe
+from engine import capture, process, probe
 from posting_queue import enqueue
-from replay_library import claim, finish, list_replays
+from replay_library import Replay, archive_url, claim, finish, list_replays
 from live_scout import LiveScout, ScoutSettings
 from runtime_profile import configure, lower_worker_priority
 
@@ -96,9 +97,12 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                 log(f"Edição iniciada: {path.name}.")
 
                 def review(candidate, media, verdict, words, hook):
-                    clip_id = enqueue(output, candidate, media, verdict, " ".join(word for _, _, word in words),
+                    clip_id = enqueue(output, candidate, media, verdict,
+                                      verdict.get("studio_transcript", " ".join(word for _, _, word in words)),
                                       hook, screening[0])
-                    if media and scout.autopilot and not stop.is_set():
+                    model_ok = (verdict.get("visual") if scout.vision_model else
+                                verdict.get("semantic") if scout.model else True)
+                    if media and scout.autopilot and model_ok and not stop.is_set():
                         if upload_slots.acquire(blocking=False):
                             pending = sending.submit(send_approved, clip_id)
                             pending.add_done_callback(lambda _: upload_slots.release())
@@ -116,7 +120,7 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                                 for style, variant in clip["variants"].items() if "screening" in variant]
                     record_final(path.parent / "triagem.sqlite3", path.stem, variants)
                 if release_source and report and (screening is not None or any(folder.glob("clip_*.mp4"))):
-                    path.unlink()
+                    path.unlink(missing_ok=True)
                     path.with_suffix(".json").unlink(missing_ok=True)
                     (folder / "midia-revisao.mp4").unlink(missing_ok=True)
 
@@ -125,7 +129,7 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                 release_source = managed and settings.render and scout.clean
                 if bounded and not capacity.acquire(blocking=False):
                     if release_source:
-                        path.unlink()
+                        path.unlink(missing_ok=True)
                         path.with_suffix(".json").unlink(missing_ok=True)
                         log("Fila de render cheia. Candidato descartado; decisão disponível na triagem.")
                     else:
@@ -136,8 +140,14 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                     activity_update(live_url, change=1)
                     try:
                         safely(render_job, path, folder, replace(settings, save_review=False) if release_source else settings,
-                               release_source, screening, live_review, recording)
+                               False, screening, live_review, recording)
                     finally:
+                        if release_source:
+                            for temporary in (path, path.with_suffix(".json"), folder / "midia-revisao.mp4"):
+                                try:
+                                    temporary.unlink(missing_ok=True)
+                                except OSError as error:
+                                    log(f"Limpeza de {temporary.name}: {error}")
                         activity_update(live_url, change=-1)
 
                 job = analysis.submit(run_render)
@@ -146,25 +156,49 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                 return folder
 
             def vod(url, folder, result, settings):
-                log(f"Baixando VOD: {url}")
+                from recording_analysis import select
+                from replay_media import download
+
+                folder.mkdir(parents=True, exist_ok=True)
+                result.mkdir(parents=True, exist_ok=True)
                 try:
-                    path = fetch_vod(sys.executable, url, folder, max_bytes=scout.replay_gib * 1024**3, stop=stop)
-                except (OSError, RuntimeError, ValueError):
-                    if scout.clean:
-                        for file in folder.glob("vod*"):
-                            if file.is_file():
-                                file.unlink(missing_ok=True)
+                    with TemporaryDirectory(prefix="replay-audio-", dir=folder) as audio_stage:
+                        log(f"Baixando apenas a faixa de áudio da gravação: {url}")
+                        audio, duration = download(url, Path(audio_stage), "audio", stop,
+                                                   limit=scout.replay_gib * 1024**3)
+                        periods, _, picks = analysis.submit(select, audio, result, duration, None,
+                                                            settings, scout.model, stop.is_set, weights, log).result()
+                    (result / "selecao-replay.json").write_text(
+                        json.dumps({"source": url, "duration": duration, "candidates": picks},
+                                   ensure_ascii=False, indent=2), encoding="utf-8")
+                    if not settings.render:
+                        return True
+                    for index, (period, pick) in enumerate(zip(periods, picks), 1):
+                        if stop.is_set():
+                            return False
+                        low, high = period[0]
+                        minimum = max(15, scout.threshold - 16)
+                        if pick["av_score"] < minimum:
+                            log(f"Trecho {index}: {pick['av_score']}/100 ficou abaixo da triagem de replay ({minimum}).")
+                            continue
+                        log(f"Baixando somente {low:.1f}–{high:.1f} s em até {scout.replay_height}p.")
+                        with TemporaryDirectory(prefix="replay-clip-", dir=folder) as clip_stage:
+                            path, size = download(url, Path(clip_stage), "video", stop,
+                                                  window=(low, high), limit=1024**3, max_height=scout.replay_height)
+                            log(f"Trecho {index} recebido em {size[0]} × {size[1]}.")
+                            local_duration = min(high - low, probe(path)[0])
+                            clip_options = replace(settings, count=1, manual=((0., local_duration),),
+                                                   full_hd=max(size) >= 1920, save_review=False, trim_inactive=True)
+                            prior = {"vision_model": scout.vision_model, "origin_url": url,
+                                     "origin_offset": low, "speech_language": settings.speech_language}
+                            screening = (scout.model, scout.threshold, prior) if scout.review_final else None
+                            analysis.submit(render_job, path, result / f"Trecho-{index:02d}", clip_options, False,
+                                            screening).result()
+                    return True
+                except InterruptedError:
                     if stop.is_set():
                         return False
                     raise
-                log(f"Download concluído: {path.name}.")
-                release = settings.render and scout.clean
-                screening = (scout.model, scout.threshold, {"vision_model": scout.vision_model}) if scout.review_final and settings.render else None
-                finished = analysis.submit(render_job, path, result,
-                                           replace(settings, save_review=False) if release else settings,
-                                           release, screening, False, True)
-                finished.result()
-                return True
 
             def import_replays(source, folder, target, settings):
                 db = output / "replays.sqlite3"
@@ -210,30 +244,80 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                         prior = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
                         screening = (scout.model, scout.threshold, dict(prior, vision_model=scout.vision_model))
                         settings = replace(settings, save_review=False)
+                elif scout.review_final and settings.render:
+                    screening = (scout.model, scout.threshold, {"vision_model": scout.vision_model})
                 return schedule(path, result / block.relative_to(capture_dir), settings,
                                 bounded=scout.enabled, managed=scout.enabled, screening=screening, live_review=screening is not None,
                                 live_url=live_url)
 
-            def monitor(url, folder, callback):
+            def monitor(url, folder, callback, replay_result, options):
                 def state(value):
                     activity_update(url, state=value)
+                on_ended = None
+                if scout.replay_after_live and not scout.replay_count:
+                    direct = re.fullmatch(r"/live/([\w-]{11})", urlsplit(url).path, re.ASCII)
+                    if direct and urlsplit(url).hostname == "www.youtube.com":
+                        replay = Replay("youtube", direct[1], f"https://www.youtube.com/watch?v={direct[1]}")
+                        on_ended = lambda: downloads.submit(safely, process_new_replay, url, folder, replay_result, options, replay, set())
+                    else:
+                        try:
+                            archive_url(url)
+                            seen = {item.id for item in list_replays(sys.executable, url, 3)}
+                        except (RuntimeError, OSError, ValueError):
+                            seen = None
+                        if seen is not None:
+                            on_ended = lambda: downloads.submit(safely, process_new_replay, url, folder, replay_result, options, None, seen)
                 try:
-                    monitor_source(url, folder, callback, state)
+                    monitor_source(url, folder, callback, state, on_ended)
                 finally:
                     state("Captura encerrada")
 
-            def monitor_source(url, folder, callback, state):
+            def process_new_replay(url, folder, result, settings, direct, seen):
+                database = output / "replays.sqlite3"
+                for attempt in range(6):
+                    if attempt and stop.wait(25):
+                        return
+                    if stop.is_set():
+                        return
+                    try:
+                        new = [direct] if direct else [item for item in list_replays(sys.executable, url, 3)
+                                                       if item.id not in seen]
+                        if not new:
+                            continue
+                        replay = new[0]
+                        if not claim(database, replay):
+                            return
+                        ok = False
+                        try:
+                            with archive_slots:
+                                ok = vod(replay.url, folder / "Replays" / replay.id,
+                                         result / "Replays" / replay.id, replace(settings, count=max(3, settings.count)))
+                        finally:
+                            finish(database, replay, ok and settings.render)
+                        if ok:
+                            seen.add(replay.id)
+                            return
+                    except (OSError, RuntimeError, ValueError) as error:
+                        if attempt == 5 and not stop.is_set():
+                            log(f"Replay recente indisponível: {error}")
+                if not stop.is_set():
+                    log("Replay recente não disponível nesta janela de busca. Você pode adicionar a URL do VOD.")
+
+            def monitor_source(url, folder, callback, state, on_ended):
                 if not scout.enabled:
                     capture(sys.executable, url, folder, minutes, callback, stop, log, wait_minutes,
                             continuous=scout.continuous, catchup=scout.catchup,
-                            offline_seconds=scout.live_poll_hours * 3600 or 45, on_state=state)
+                            offline_seconds=scout.live_poll_hours * 3600 or 45, on_state=state,
+                            capture_height=scout.capture_height, on_ended=on_ended)
                     return
                 detector = LiveScout(folder, url, scout, callback, log, editorial_weights=weights)
                 try:
                     capture(sys.executable, url, folder, minutes, detector.receive, stop,
                             log, wait_minutes, segment_seconds=15,
                             continuous=scout.continuous, catchup=scout.catchup,
-                            offline_seconds=scout.live_poll_hours * 3600 or 45, on_state=state)
+                            offline_seconds=scout.live_poll_hours * 3600 or 45, on_state=state,
+                            capture_height=scout.capture_height, discard_short=scout.clean,
+                            on_ended=on_ended)
                 finally:
                     detector.close()
 
@@ -265,7 +349,7 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                             continue
                         callback = partial(schedule_live, capture_dir=folder, result=result, live_url=source,
                                            settings=replace(settings, count=1, montage=False) if scout.enabled else settings)
-                        futures.append(lives.submit(safely, monitor, source, folder, callback))
+                        futures.append(lives.submit(safely, monitor, source, folder, callback, result, settings))
             for future in futures:
                 future.result()
         clips = sum(1 for _ in (batch / "Clipes prontos").rglob("clip_*.mp4"))

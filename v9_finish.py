@@ -64,7 +64,7 @@ def music_bed(path):
     return path
 
 
-def camera_move(layer, target, frames, amount, anchor):
+def camera_move(layer, target, frames, amount, anchor, *, size=(720, 1280)):
     """Ease into the emphasis and, when there is room, settle before the cut."""
     attack = "min(on/8,1)"
     release = f"min(max(({frames}-1-on)/10,0),1)" if frames >= 42 else "1"
@@ -72,4 +72,4 @@ def camera_move(layer, target, frames, amount, anchor):
     x, y = anchor
     return (f";{layer}fps=30,scale=1440:2560:flags=lanczos,"
             f"zoompan=z='{zoom}':x='(iw-iw/zoom)*{x}':y='(ih-ih/zoom)*{y}':"
-            f"d=1:s=720x1280:fps=30{target}")
+            f"d=1:s={size[0]}x{size[1]}:fps=30{target}")

@@ -6,7 +6,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-VERSION = "0.5.1"
+VERSION = "0.6.1"
 CHECK_INTERVAL_SECONDS = 20 * 60
 REPO = "johnzerola/clip-studio"
 API_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
@@ -48,4 +48,6 @@ def check_for_update(callback, *, force=False):
             pass
         finally:
             _LOCK.release()
-    threading.Thread(target=worker, daemon=True, name="update-check").start()
+    task = threading.Thread(target=worker, daemon=True, name="update-check")
+    task.start()
+    return task

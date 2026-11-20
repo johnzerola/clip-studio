@@ -1,13 +1,14 @@
 """Bounded timestamped transcription and editorial selection for recordings."""
 import heapq
 import json
+import math
 
 from viral_rank import candidates, judge_local
 from vendor.openshorts.clip_selection import dedupe_overlapping
 
 
 def select(source, folder, total, signals, options, model, stop, weights, log):
-    from engine import stamp, transcribe
+    from engine import inspect, stamp, transcribe
     from workspace_data import topic
 
     output = folder / "transcricao.jsonl"
@@ -18,6 +19,8 @@ def select(source, folder, total, signals, options, model, stop, weights, log):
     line_start = None
     best = []
     serial = 0
+    audio_only = signals is None
+    signals = signals or ()
     log("Transcrevendo gravação. Cada linha traz o tempo exato na fonte.")
     try:
         with (scratch.open("w", encoding="utf-8") as handle,
@@ -34,7 +37,7 @@ def select(source, folder, total, signals, options, model, stop, weights, log):
                     break
                 # Look back across block boundaries for selection without repeating captions.
                 offset = max(0., start - min(60., options.duration))
-                words = transcribe(source, offset, end)
+                words = transcribe(source, offset, end, language=options.speech_language)
                 for a, b, word in words:
                     if start <= (a + b) / 2 < end:
                         handle.write(json.dumps({"start": round(a, 3), "end": round(b, 3),
@@ -44,10 +47,17 @@ def select(source, folder, total, signals, options, model, stop, weights, log):
                         line.append(word)
                         if word.endswith((".", "?", "!")) or len(line) >= 16:
                             flush()
-                local = [(at - offset, audio, motion) for at, audio, motion in signals
-                         if offset <= at < end]
+                if audio_only:
+                    measured = inspect(source, end - offset, True, start=offset, video=False)
+                    local = [(i * 2, 20 * math.log10(max(1., audio)), 0.)
+                             for i, (audio, _, _) in enumerate(measured)]
+                else:
+                    local = [(at - offset, audio, motion) for at, audio, motion in signals if offset <= at < end]
                 picks = candidates([(a-offset, b-offset, word) for a,b,word in words],
                                    local, end-offset, options.duration, start-offset)
+                if audio_only:
+                    for pick in picks:
+                        pick["features"]["selection_source"] = "audio_transcript"
                 for pick in sorted(picks, key=lambda row: row["av_score"], reverse=True)[:3]:
                     if not pick["transcript"] and pick["features"]["motion"] < 1.8:
                         continue
