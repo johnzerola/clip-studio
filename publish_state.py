@@ -55,6 +55,8 @@ def start_upload(folder, clip, channel, when, meta, progress):
         status = "scheduled" if scheduled else "uploaded"
         detail = ("Agendamento confirmado pelo YouTube." if scheduled else
                   "Upload recebido. Confirme no Studio o horário e a visibilidade.")
+        if result.get("thumbnail_warning"):
+            detail += " " + result["thumbnail_warning"]
     except UploadUncertain as error:
         status, detail = "uncertain", str(error)
     except (OSError, ValueError, RuntimeError, KeyError, TypeError) as error:
@@ -65,6 +67,36 @@ def start_upload(folder, clip, channel, when, meta, progress):
         db.execute("UPDATE uploads SET state=?,video=?,detail=? WHERE clip=? AND channel=?",
                    (status, video, detail, clip, channel))
     return upload_info(folder, clip, channel)
+
+
+def browser_draft(folder, clip, platform, data=None):
+    with closing(db_open(folder)) as db, db:
+        db.execute("""CREATE TABLE IF NOT EXISTS browser_drafts (
+            clip TEXT NOT NULL, platform TEXT NOT NULL, title TEXT, caption TEXT, planned TEXT,
+            PRIMARY KEY(clip,platform))""")
+        if data is not None:
+            db.execute("""INSERT OR REPLACE INTO browser_drafts VALUES (?,?,?,?,?)""",
+                       (clip, platform, data["title"], data["caption"], data["planned"]))
+        row = db.execute("SELECT title,caption,planned FROM browser_drafts WHERE clip=? AND platform=?",
+                         (clip, platform)).fetchone()
+        return dict(row) if row else {}
+
+
+def browser_states(folder, platform):
+    with closing(db_open(folder)) as db, db:
+        db.execute("""CREATE TABLE IF NOT EXISTS browser_drafts (
+            clip TEXT NOT NULL, platform TEXT NOT NULL, title TEXT, caption TEXT, planned TEXT,
+            PRIMARY KEY(clip,platform))""")
+        return {row["clip"]: row["status"] for row in db.execute("""
+            SELECT b.clip,COALESCE(d.status,'Rascunho local') AS status
+              FROM browser_drafts b LEFT JOIN destinations d ON d.clip=b.clip AND d.platform=b.platform
+             WHERE b.platform=?
+            UNION ALL
+            SELECT d.clip,d.status FROM destinations d
+             WHERE d.platform=? AND NOT EXISTS (
+                SELECT 1 FROM browser_drafts b WHERE b.clip=d.clip AND b.platform=d.platform
+             )
+        """, (platform, platform))}
 
 
 def review_info(folder, clip):

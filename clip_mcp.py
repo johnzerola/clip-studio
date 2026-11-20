@@ -19,10 +19,16 @@ class JobRequest(BaseModel):
     minutes: int = Field(5, ge=0, le=720)
     ranges: str = ""
     captions: bool = True
+    channel_handle: str = Field("", max_length=31)
+    hook_text: str = Field("", max_length=64)
+    effects_model: str = ""
+    smart_reframe: bool = False
     music: bool = True
     model: str = ""
     vision_model: str = ""
     trim_inactive: bool = True
+    transcribe_recordings: bool = False
+    live_poll_hours: int = Field(1, ge=0, le=3)
     review: bool = False
     threshold: int = Field(60, ge=20, le=95)
     catchup: bool = False
@@ -59,6 +65,7 @@ class JobOutputs(BaseModel):
     session: str | None
     clips: list[str]
     plans: list[str]
+    transcripts: list[str] = Field(default_factory=list)
 
 
 @server.tool()

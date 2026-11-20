@@ -10,6 +10,7 @@ resultados/
 .env
 preferencias.local.json
 preferencias.local.tmp
+update_check.local.json
 
 # Local capture, results and browser/session data
 *.sqlite3

@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+import tema
 from runtime_profile import lower_worker_priority
 from posting_queue import (STUDIOS, STATES, calibration_count, disposition, enqueue,
                            index_previous, ranked, retention)
@@ -34,8 +35,8 @@ def show_queue(parent, folder, model, threshold):
     for key, label, width in (("score", "Nota", 75), ("status", "Revisão", 125), ("title", "Título", 620)):
         table.heading(key, text=label)
         table.column(key, width=width, stretch=key == "title")
-    table.tag_configure("top", background="#dcefdc")
-    table.tag_configure("similar", foreground="#75551d")
+    table.tag_configure("top", background=tema.active["good_bg"], foreground=tema.active["good"])
+    table.tag_configure("similar", foreground=tema.active["mid"])
     table.grid(row=1, column=0, sticky="nsew", pady=8)
     detail = tk.Text(frame, height=7, wrap="word", state="disabled")
     detail.grid(row=2, column=0, sticky="ew")

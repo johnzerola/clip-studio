@@ -189,6 +189,11 @@ def send(path, meta, publish_at, channel_id, progress=lambda _: None):
                     result = json.load(response)
                     if "id" not in result:
                         raise UploadUncertain("Envio aceito sem ID. Confira o Studio antes de repetir.")
+                    if meta.get("thumbnail"):
+                        try:
+                            set_thumbnail(token, result["id"], Path(meta["thumbnail"]))
+                        except (OSError, ValueError, RuntimeError, KeyError):
+                            result["thumbnail_warning"] = "A miniatura precisa ser aplicada pelo YouTube Studio."
                     return result
             except urllib.error.HTTPError as error:
                 if error.code == 308 and error.headers.get("Range") == f"bytes=0-{finish-1}":
@@ -203,3 +208,13 @@ def send(path, meta, publish_at, channel_id, progress=lambda _: None):
                     raise
                 raise UploadUncertain("Conexão interrompida durante o envio. Confira o Studio.") from error
     raise UploadUncertain("Envio encerrado sem confirmação do YouTube.")
+
+
+def set_thumbnail(token, video_id, path):
+    if not 0 < path.stat().st_size <= 2 * 1024 * 1024:
+        raise ValueError("Use uma miniatura JPEG de até 2 MiB.")
+    endpoint = "https://www.googleapis.com/upload/youtube/v3/thumbnails/set?"
+    endpoint += urllib.parse.urlencode({"videoId": video_id, "uploadType": "media"})
+    with request(endpoint, data=path.read_bytes(),
+                 headers={"Authorization": f"Bearer {token}", "Content-Type": "image/jpeg"}) as response:
+        return json.load(response)

@@ -34,6 +34,10 @@ def main():
     parser.add_argument("--contiguous", action="store_true")
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--compression", choices=("original", "compacto", "hevc"), default="compacto")
+    parser.add_argument("--channel-handle", default="", help="@ do seu canal no vídeo")
+    parser.add_argument("--hook-text", default="")
+    parser.add_argument("--effects-model", default="")
+    parser.add_argument("--smart-reframe", action="store_true")
     parser.add_argument("--captions", action="store_true")
     parser.add_argument("--cut-silence", action="store_true")
     parser.add_argument("--cut-repeats", action="store_true")
@@ -67,7 +71,8 @@ def main():
                        not args.contiguous, args.duration, args.count, args.render, manual, cleanup, args.auto_face,
                        args.look, args.hook, args.polish, args.broll_dir, args.close_focus,
                        args.voice_polish, args.jcut_ms, args.music, args.music_db,
-                       args.transition, args.sfx, args.sfx_peak, args.compression)
+                       args.transition, args.sfx, args.sfx_peak, args.compression, channel_handle=args.channel_handle,
+                       hook_text=args.hook_text, effects_model=args.effects_model, smart_reframe=args.smart_reframe)
         process(args.source, args.out.resolve(), opts, print)
     except (ValueError, RuntimeError, OSError) as error:
         parser.exit(1, f"{error}\n")

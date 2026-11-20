@@ -2,11 +2,13 @@
 
 **Transforme lives e gravações em cortes verticais para Shorts, TikTok e Reels.** Aplicativo Windows para acompanhar canais, escolher momentos, editar com legendas e revisar clipes antes de publicar.
 
-**Windows 10/11** · **Português** · **Código aberto sob MIT**
+**Windows 10/11** · **Português** · **Código aberto sob MIT** · **v0.4.0**
 
 **[Baixar para Windows](https://github.com/johnzerola/clip-studio/releases/latest/download/Clip-Studio-Windows.zip)** · [Guia ilustrado](docs/GUIA-DO-PAINEL.md) · [Arquitetura](docs/ARQUITETURA.md) · [Contribuir](#contribuir)
 
-![Painel do Clip Studio com fontes fictícias, estilo Dinâmico e modo Leve](docs/img/painel.png)
+![Visão geral do Clip Studio com dados de demonstração](docs/img/visao-geral.png)
+
+[Lives, postagens e modelos locais](docs/LIVES-E-POSTAGENS.md) · [Studio, UGC e integração OpenShorts](docs/INTEGRACAO-OPENSHORTS.md)
 
 ## O que dá para fazer
 
@@ -15,9 +17,13 @@
 | Cortar um MP4 ou vídeo que já baixei | **Adicionar arquivos…** e **Ajustar corte…** |
 | Descobrir momentos sem exportar ainda | **Gerar só o plano de cortes** e abrir o `cortes.json` em **Abrir plano…** |
 | Acompanhar um canal ou buscar as transmissões anteriores | **Fontes** e **Lives e gravações** |
+| Assinar os clipes com seu próprio @ | **Edição → @ do canal** |
 | Comparar enquadramentos 9:16 | **Estilo → Ver e escolher…** |
 | Usar trilha, melhorar a voz e escolher imagens de apoio | **Som e B-roll** |
-| Escolher os melhores cortes para postar | **Prontos para postar** |
+| Escolher os melhores cortes para postar | **Postagens**, com player no painel e filtros por etapa |
+| Assistir com o vídeo em destaque | **Postagens → Sala de revisão**. A **Galeria** mantém a prévia lateral |
+| Ver horários e status por conta | **Agenda** |
+| Escolher a aparência do painel | **Tema → Claro, Escuro ou Sistema** |
 | Usar o computador enquanto o projeto roda | **Leve · uso diário**. Comece com um canal e acompanhe o registro |
 
 ## Baixar e instalar
@@ -33,6 +39,8 @@
    ```
 
 5. Abra pelo atalho ou por **Iniciar.cmd**. O [guia de instalação](docs/INSTALACAO.md) explica requisitos, instalação manual, atualização e diagnóstico.
+
+O painel consulta uma vez por dia a página pública de releases do GitHub. Quando uma versão mais recente fica disponível, ele oferece abrir a página para baixar a atualização. A consulta acontece em segundo plano e não exige chave. Para atualizar esta instalação inicial, baixe a versão nova em **Releases** e siga [Atualizar e preservar dados](docs/INSTALACAO.md#atualizar-e-preservar-dados).
 
 [Instruções oficiais para baixar um ZIP do GitHub](https://docs.github.com/en/repositories/working-with-files/using-files/downloading-source-code-archives)
 

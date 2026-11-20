@@ -52,7 +52,11 @@ O MCP serve ao banco de efeitos e à referência V9. Instale `requirements-mcp.t
 
 ## Atualizar e preservar dados
 
-Feche a sessão antes de mexer na instalação. Baixe a nova versão para outra pasta e execute o instalador lá. Abra a nova cópia e selecione a pasta de saída anterior se quiser manter acesso aos resultados e ao histórico. As preferências ficam em `preferencias.local.json` dentro de cada instalação. Se você usa `biblioteca.local`, copie essa pasta para a nova instalação. Os modelos Whisper ficam em `models`.
+O painel consulta a release pública uma vez por dia, em segundo plano. Se houver uma versão mais nova, oferece abrir a página no GitHub para baixar. A verificação usa a API pública, sem chave; falha de rede não bloqueia o app. Releases também podem gerar notificações do GitHub para quem acompanha o repositório.
+
+Para atualizar, feche a sessão antes de mexer na instalação. Baixe a nova versão em [Releases](https://github.com/johnzerola/clip-studio/releases/latest) e extraia em outra pasta. Execute o instalador e abra a nova cópia. Selecione a pasta de saída anterior para manter acesso aos resultados e ao histórico. As preferências ficam em `preferencias.local.json` dentro de cada instalação. Se você usa `biblioteca.local`, copie essa pasta para a nova instalação. Os modelos Whisper ficam em `models`.
+
+Versões anteriores à `0.4.0` não incluem o verificador automático. Para a primeira atualização, baixe esta versão pela página de Releases; a partir dela o painel avisa sobre futuras versões.
 
 Para desinstalar, feche o app, remova o atalho da instalação e apague a pasta instalada depois de copiar as mídias, os resultados e as preferências que quiser guardar. Resultados em outra unidade permanecem na pasta escolhida.
 

@@ -29,6 +29,9 @@ def connect():
             db.execute("""CREATE TABLE IF NOT EXISTS events (
                 seq INTEGER PRIMARY KEY AUTOINCREMENT, job TEXT NOT NULL, line TEXT NOT NULL)""")
             db.execute("CREATE INDEX IF NOT EXISTS event_job ON events(job,seq)")
+            db.execute("""CREATE TABLE IF NOT EXISTS source_activity (
+                job TEXT NOT NULL, source TEXT NOT NULL, state TEXT NOT NULL,
+                PRIMARY KEY(job,source))""")
             yield db
 
 
@@ -53,6 +56,7 @@ def reserve(origin, sources, output, request=None):
         # Keep the registry bounded without touching any result or media.
         old = """SELECT id FROM jobs WHERE state NOT IN ('queued','running') ORDER BY created DESC LIMIT -1 OFFSET 100"""
         db.execute(f"DELETE FROM events WHERE job IN ({old})")
+        db.execute(f"DELETE FROM source_activity WHERE job IN ({old})")
         db.execute(f"DELETE FROM jobs WHERE id IN ({old})")
     return key
 
@@ -70,6 +74,15 @@ def get(key, *, after=0, limit=0):
                 "SELECT seq,line FROM events WHERE job=? AND seq>? ORDER BY seq LIMIT ?",
                 (key, max(0, after), min(500, max(1, limit))))]
         return out
+
+
+def active_sources(output):
+    with connect() as db:
+        expire(db)
+        return [tuple(row) for row in db.execute("""
+            SELECT a.source,a.state FROM source_activity a JOIN jobs j ON j.id=a.job
+            WHERE j.state='running' AND j.output=? ORDER BY a.source
+        """, (str(output),))]
 
 
 def list_jobs(limit=25):
@@ -151,9 +164,13 @@ def tracked_session(origin, sources, options, minutes, workers, output, wait_min
 
     key = key or reserve(origin, [value for value, _, _ in sources], output)
 
+    def activity(source, state):
+        with connect() as db:
+            db.execute("INSERT OR REPLACE INTO source_activity VALUES (?,?,?)", (key, source, state))
+
     def action(event, session):
         return run_session(sources, options, minutes, workers, output, wait_minutes, stop, event, scout,
-                           on_batch=session)
+                           on_batch=session, activity=activity)
 
     return start(key, action, stop, log)
 
@@ -196,8 +213,9 @@ def request_for(key):
 def outputs(key):
     row = get(key)
     if not row["session"]:
-        return {"id": key, "session": None, "clips": [], "plans": []}
+        return {"id": key, "session": None, "clips": [], "plans": [], "transcripts": []}
     folder = Path(row["session"])
     clips = folder / "Clipes prontos"
     return {"id": key, "session": str(folder), "clips": [str(path) for path in sorted(clips.rglob("clip_*.mp4"))],
-            "plans": [str(path) for path in sorted(clips.rglob("cortes.json"))]}
+            "plans": [str(path) for path in sorted(clips.rglob("cortes.json"))],
+            "transcripts": [str(path) for path in sorted(clips.rglob("transcricao.txt"))]}

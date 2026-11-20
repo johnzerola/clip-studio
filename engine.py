@@ -64,6 +64,19 @@ class Options:
     auto_music: bool | None = None
     keep_manual_edges: bool = False
     trim_inactive: bool = False
+    channel_handle: str = ""
+    hook_text: str = ""
+    effects_model: str = ""
+    smart_reframe: bool = False
+
+    def __post_init__(self):
+        handle = self.channel_handle.strip()
+        if handle:
+            handle = handle.removeprefix("@")
+            if not re.fullmatch(r"[\w.-]{1,30}", handle):
+                raise ValueError("Use até 30 caracteres no @ do canal. São aceitos letras, números, ponto, hífen e sublinhado.")
+            handle = "@" + handle
+        object.__setattr__(self, "channel_handle", handle)
 
 
 def command(args, **kwargs):
@@ -208,11 +221,14 @@ def crop(region):
     return f"crop=iw*{w}:ih*{h}:iw*{x}:ih*{y},"
 
 
-def layout_graph(style, options):
+def layout_graph(style, options, focus_x=None):
     def fit(region, width, height):
         return (crop(region) + f"scale={width}:{height}:force_original_aspect_ratio=decrease:"
                 f"force_divisible_by=2,setsar=1,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=0x101522")
     def game_canvas(source, target):
+        if focus_x is not None:
+            return (f"{source}scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase:"
+                    f"force_divisible_by=2,crop={WIDTH}:{HEIGHT}:(iw-ow)*{focus_x}:(ih-oh)/2,setsar=1{target}")
         return (f"{source}{crop(options.game)}split=2[back][play];"
                 f"[back]scale=180:320:force_original_aspect_ratio=increase:force_divisible_by=2,"
                 f"crop=180:320,gblur=sigma=12,drawbox=c=black@0.24:t=fill,"
@@ -376,7 +392,7 @@ def opening_phrase(words, start):
     return " ".join(chosen).strip(" .,:;") if len(chosen) >= 4 else ""
 
 
-def subtitles(path, words, start, end, style, look="classic", hook="", opening=None):
+def subtitles(path, words, start, end, style, look="classic", hook="", opening=None, *, channel_handle=""):
     y = (562 if look == "shorts" else 495) if style == "split" else 1035
     head = """[Script Info]
 ScriptType: v4.00+
@@ -386,10 +402,14 @@ PlayResY: 1280
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Caption,Arial,48,&H0000DEFF,&H00FFFFFF,&H00101218,&H60000000,-1,0,0,0,100,100,0,0,1,4,1,5,50,50,40,1
 Style: Hook,Arial,44,&H00FFFFFF,&H00FFFFFF,&H00131824,&H00131824,-1,0,0,0,100,100,0,0,3,11,0,5,106,106,30,1
+Style: Channel,Segoe UI,36,&H20FFFFFF,&H20FFFFFF,&H38101620,&H62000000,-1,0,0,0,100,100,0,0,1,2.5,1,8,28,28,26,1
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     lines = []
+    if channel_handle:
+        lines.append(f"Dialogue: 2,{stamp(0)},{stamp(end-start+.04)},Channel,,0,0,0,,"
+                     + r"{\pos(360,118)}" + ass_text(channel_handle))
     if hook and opening is not None and start < opening + 2.7 and end > opening:
         at, until = max(start, opening), min(end, opening + 2.7)
         hook_y = 415 if style == "split" else 280
@@ -460,7 +480,11 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
         frames = max(1, round(elapsed * 30) - frame_start)
         frame_counts.append(frames)
         name = f"p{len(pieces):03}.mp4"
-        graph = layout_graph(style, options)
+        focus_x = None
+        if options.smart_reframe and style == "game" and not options.face and not options.game:
+            from creative_studio import shot_focus
+            focus_x = shot_focus(source, start, end)
+        graph = layout_graph(style, options, focus_x)
         layer = "[base]"
         inputs = []
         opening_punch = index == 0 and (style == "face" or (style == "split" and hook))
@@ -531,8 +555,10 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
                 v9_cues.append((frame_start / 30 + inserts[index][1], "whoosh" if insert_full else "radio", -15))
             if index == dissolve:
                 v9_cues.append(((frame_start - 1) / 30, "impacto", -12))
-        if words or hook:
-            subtitles(scratch / "legend.ass", words, start, end, style, options.look, hook, shots[0][0])
+        if words or hook or options.channel_handle:
+            # Keep the channel mark active on the entire shot, including a rounded-up final frame.
+            subtitles(scratch / "legend.ass", words, start, end, style, options.look, hook, shots[0][0],
+                      channel_handle=options.channel_handle)
             graph += f";{layer}ass=legend.ass[out]"
         else:
             graph += f";{layer}null[out]"
@@ -585,7 +611,7 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
             "music": Path(music).name if music else None}
 
 
-def process(source, folder, options, log, *, screening=None, staging_dir=None, on_review=None):
+def process(source, folder, options, log, *, screening=None, staging_dir=None, on_review=None, recording=None):
     from dataclasses import replace
 
     folder.mkdir(parents=True, exist_ok=True)
@@ -605,6 +631,14 @@ def process(source, folder, options, log, *, screening=None, staging_dir=None, o
     handpicked = bool(options.manual and options.keep_manual_edges)
     signals = [] if handpicked else inspect(source, total, audio, options.face)
     selected = plan(signals, total, options)
+    transcript_path = None
+    method = "manual" if options.manual else "relative_audio_and_motion"
+    if recording and audio and not options.manual:
+        from recording_analysis import select
+        picks, transcript_path, shortlist = select(source, folder, total, signals, options, *recording, log)
+        if picks:
+            selected = picks
+            method = "recording_transcript_audio_motion"
     editorial_signals = {}
     if handpicked:
         for low, high in options.manual:
@@ -613,8 +647,15 @@ def process(source, folder, options, log, *, screening=None, staging_dir=None, o
                                               offset)
     report = {"schema": 1, "source": str(source), "original_source": str(original_source),
               "duration": total, "unit": "seconds",
-              "method": "manual" if options.manual else "relative_audio_and_motion",
+              "method": method,
               "facecam": options.face, "gameplay": options.game, "clips": []}
+    if transcript_path is not None:
+        report["transcript"] = transcript_path.name
+        report["transcript_readable"] = "transcricao.txt"
+        report["recording_selection"] = [
+            {key: pick[key] for key in ("start", "end", "av_score", "semantic") if key in pick}
+            for pick in shortlist
+        ]
     report_path = folder / "cortes.json"
     cleanup = options.cleanup
     prepared = []
@@ -632,7 +673,7 @@ def process(source, folder, options, log, *, screening=None, staging_dir=None, o
             words = ([w for w in shared_words if w[0] < high and w[1] > low]
                      if shared_words is not None else [])
             if audio and shared_words is None and (cleanup.fillers or cleanup.repeats or cleanup.speech_gaps
-                                                   or options.hook or options.broll_dir or options.broll_assets or screening
+                                                   or options.hook or options.effects_model or options.broll_dir or options.broll_assets or screening
                                                    or (options.render and options.captions)):
                 log(f"Transcrevendo o trecho de {low:.1f}s a {high:.1f}s.")
                 words = transcribe(source, low, high)
@@ -663,25 +704,34 @@ def process(source, folder, options, log, *, screening=None, staging_dir=None, o
             log(f"Legendas: {len(spoken)} palavras reconhecidas." if spoken else
                 "Legendas: nenhuma fala reconhecida no trecho.")
         log(f"Edição: {len(kept)} trecho(s), {len(removals)} remoção(ões).")
-        hook = ""
-        if options.hook:
+        hook = " ".join(options.hook_text.split())[:64]
+        if not hook and options.hook:
             hook = opening_phrase(spoken, kept[0][0])
+        creative = {}
+        cut_options = options
+        if options.effects_model and options.render and spoken:
+            from creative_studio import EFFECTS, propose
+            creative = propose(options.effects_model, " ".join(word for _, _, word in spoken), hook)
+            if creative["generated"]:
+                effect = EFFECTS[creative["effect"]]
+                cut_options = replace(options, polish=effect != "corte", transition=effect)
         report["clips"].append({
             "parts": [dict(start=a, end=b, score=score(range_signals[(a, b)][0], a, b, range_signals[(a, b)][1]))
                       for a, b in kept],
             "removed": removals,
             "caption_words": len(spoken) if options.render and options.captions else 0,
             "hook": hook,
+            "creative": creative,
             "layouts": [dict(start=a, end=b, style=s) for a, b, s in by_style[styles[0]]],
             "variants": {key: {"layouts": [dict(start=a, end=b, style=s) for a, b, s in shots]}
                          for key, shots in by_style.items()}
         })
-        prepared.append((by_style, spoken, hook))
+        prepared.append((by_style, spoken, hook, cut_options))
     report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     log(f"{len(prepared)} corte(s) planejado(s) em {folder.name}")
     if not options.render:
         return
-    for index, (by_style, words, hook) in enumerate(prepared, 1):
+    for index, (by_style, words, hook, cut_options) in enumerate(prepared, 1):
         entry = report["clips"][index - 1]
         for style, shots in by_style.items():
             suffix = f"_{style}" if len(by_style) > 1 else ""
@@ -692,7 +742,7 @@ def process(source, folder, options, log, *, screening=None, staging_dir=None, o
                        (staging_dir or folder) / f".review-{folder.name}-{destination.name}")
             try:
                 variant["finishing"] = render_clip(source, publish, shots,
-                                                   words if options.captions else [], options,
+                                                   words if options.captions else [], cut_options,
                                                    hook, timing_words=words)
                 if screening is not None:
                     from final_screen import evaluate
@@ -702,6 +752,7 @@ def process(source, folder, options, log, *, screening=None, staging_dir=None, o
                                        words, model, threshold, prior)
                     verdict["duration"] = sum(b - a for a, b, _ in shots)
                     verdict["source"] = str(original_source)
+                    verdict["studio_transcript"] = " ".join(word for _, _, word in words)[:1450]
                     verdict["ranges"] = [(part["start"], part["end"]) for part in entry["parts"]]
                     variant["screening"] = verdict
                     report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -883,7 +934,7 @@ def capture_space(folder):
 
 
 def capture(python, url, folder, minutes, schedule, stop, log, wait_minutes=0, segment_seconds=120,
-            *, continuous=False, catchup=False, offline_seconds=45):
+            *, continuous=False, catchup=False, offline_seconds=45, on_state=None):
     """Wait for a live source and optionally return to watching between broadcasts."""
     ready_by = time.monotonic() + wait_minutes * 60
     deadline = None
@@ -896,6 +947,8 @@ def capture(python, url, folder, minutes, schedule, stop, log, wait_minutes=0, s
                 return
             stop.wait(45)
             continue
+        if on_state:
+            on_state("Verificando")
         attempt += 1
         target = folder / f"conexao_{attempt:03}"
         target.mkdir()
@@ -903,7 +956,8 @@ def capture(python, url, folder, minutes, schedule, stop, log, wait_minutes=0, s
         seconds = (max(1, round(deadline - started)) if deadline else (minutes * 60 if minutes else None))
         try:
             found = capture_once(python, url, target, seconds, schedule, stop, log, segment_seconds,
-                                 catchup=catchup and (last_media is None or started - last_media >= 180))
+                                 catchup=catchup and (last_media is None or started - last_media >= 180),
+                                 on_state=on_state)
         except BroadcastEnded as error:
             log(str(error))
             return
@@ -931,7 +985,12 @@ def capture(python, url, folder, minutes, schedule, stop, log, wait_minutes=0, s
                 if not any(previous.iterdir()):
                     previous.rmdir()
             log(f"{'Reconectando' if last_media and now < retry_until else 'Monitorando canal'}: {url}")
-            stop.wait(20 if last_media and now < retry_until else offline_seconds)
+            delay = 20 if last_media and now < retry_until else offline_seconds
+            if on_state:
+                on_state("Reconectando" if delay == 20 else
+                         f"Aguardando live · verifica em {delay // 3600} h" if delay >= 3600 else
+                         "Aguardando live")
+            stop.wait(delay)
             continue
         if now >= retry_until:
             if not found and last_media is None:
@@ -943,7 +1002,7 @@ def capture(python, url, folder, minutes, schedule, stop, log, wait_minutes=0, s
         stop.wait(min(20, max(0, retry_until - now)))
 
 
-def capture_once(python, url, folder, seconds, schedule, stop, log, segment_seconds, *, catchup=False):
+def capture_once(python, url, folder, seconds, schedule, stop, log, segment_seconds, *, catchup=False, on_state=None):
     """Own the capture processes and send only segments closed by FFmpeg."""
     found = False
     position = 0
@@ -995,6 +1054,8 @@ def capture_once(python, url, folder, seconds, schedule, stop, log, segment_seco
             if sl is not None:
                 sl.stdout.close()
             log(f"Capturando {url}")
+            if on_state:
+                on_state("Ao vivo · capturando")
             last_data = time.monotonic()
             signature = None
             while ff.poll() is None and not stop.wait(2) and time.monotonic() < deadline:

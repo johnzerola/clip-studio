@@ -22,7 +22,7 @@ from runtime_profile import configure, lower_worker_priority
 
 
 def run_session(sources, options, minutes, workers, output, wait_minutes, stop, write_log,
-                scout=ScoutSettings(False), *, on_batch=None):
+                scout=ScoutSettings(False), *, on_batch=None, activity=None):
     batch = output / (datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:6])
     errors = queue.SimpleQueue()
     log_lock = threading.Lock()
@@ -54,27 +54,63 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
         log(f"Sessão: {batch}")
         profile = configure(scout.performance)
         workers = min(workers, profile.max_renders)
+        from workspace_data import editorial_weights, register_exports
+        weights = editorial_weights(output)
         available = shutil.disk_usage(output).free / 1024**3
         log(f"Modo {profile.label} · até {workers} render(es) simultâneo(s) · {available:.1f} GiB livres.")
         live_count = sum(kind == "live" for _, kind, _ in sources)
         if profile.low_priority and live_count > 2 and not scout.replay_only:
             log("Modo Leve com mais de dois canais: a triagem pode acumular atraso.")
-        with (ThreadPoolExecutor(max_workers=workers) as analysis,
+        with (ThreadPoolExecutor(max_workers=1) as sending, ThreadPoolExecutor(max_workers=workers) as analysis,
               ThreadPoolExecutor(max_workers=8) as lives, ThreadPoolExecutor(max_workers=2) as downloads,
               ThreadPoolExecutor(max_workers=8) as archives):
             capacity = threading.BoundedSemaphore(max(3, workers * 3))
             archive_slots = threading.BoundedSemaphore(1)
+            upload_slots = threading.BoundedSemaphore(2)
 
-            def render_job(path, folder, settings, release_source, screening, live_review=False):
+            def send_approved(clip_id):
+                from studio_services import auto_publish
+                try:
+                    if stop.is_set():
+                        return
+                    message = auto_publish(output, clip_id, scout.autopilot)
+                    if message:
+                        log(message)
+                except (OSError, ValueError, RuntimeError) as error:
+                    log(f"Piloto automático: {error}")
+            states, edits = {}, {}
+            activity_lock = threading.Lock()
+
+            def activity_update(source, state=None, change=0):
+                if not activity or not source:
+                    return
+                with activity_lock:
+                    if state is not None:
+                        states[source] = state
+                    edits[source] = edits.get(source, 0) + change
+                    suffix = f" · editando {edits[source]}" if edits[source] else ""
+                    activity(source, states.get(source, "Preparando") + suffix)
+
+            def render_job(path, folder, settings, release_source, screening, live_review=False, recording=False):
                 lower_worker_priority()
                 log(f"Edição iniciada: {path.name}.")
 
                 def review(candidate, media, verdict, words, hook):
-                    enqueue(output, candidate, media, verdict, " ".join(word for _, _, word in words),
-                            hook, screening[0])
+                    clip_id = enqueue(output, candidate, media, verdict, " ".join(word for _, _, word in words),
+                                      hook, screening[0])
+                    if media and scout.autopilot and not stop.is_set():
+                        if upload_slots.acquire(blocking=False):
+                            pending = sending.submit(send_approved, clip_id)
+                            pending.add_done_callback(lambda _: upload_slots.release())
+                        else:
+                            log("Piloto automático: fila ocupada. Clipe mantido para agendamento manual.")
 
                 report = process(path, folder, settings, log, screening=screening,
-                                 staging_dir=path.parent if live_review else None, on_review=review if screening else None)
+                                 staging_dir=path.parent if live_review else None, on_review=review if screening else None,
+                                 recording=(scout.model, stop.is_set, weights)
+                                 if recording and scout.transcribe_recordings else None)
+                if report and settings.render:
+                    register_exports(output, folder.glob("clip_*.mp4"))
                 if live_review and report:
                     variants = [(style, variant["screening"]) for clip in report["clips"]
                                 for style, variant in clip["variants"].items() if "screening" in variant]
@@ -84,7 +120,8 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                     path.with_suffix(".json").unlink(missing_ok=True)
                     (folder / "midia-revisao.mp4").unlink(missing_ok=True)
 
-            def schedule(path, folder, settings, bounded=False, managed=False, screening=None, live_review=False):
+            def schedule(path, folder, settings, bounded=False, managed=False, screening=None, live_review=False,
+                         recording=False, live_url=None):
                 release_source = managed and settings.render and scout.clean
                 if bounded and not capacity.acquire(blocking=False):
                     if release_source:
@@ -95,9 +132,15 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                         log(f"Fila de render cheia. Candidato guardado em {path.parent}.")
                     return False
                 log(f"{'Fila de edição' if settings.render else 'Fila de análise'}: {path.name}.")
-                job = analysis.submit(safely, render_job, path, folder,
-                                      replace(settings, save_review=False) if release_source else settings,
-                                      release_source, screening, live_review)
+                def run_render():
+                    activity_update(live_url, change=1)
+                    try:
+                        safely(render_job, path, folder, replace(settings, save_review=False) if release_source else settings,
+                               release_source, screening, live_review, recording)
+                    finally:
+                        activity_update(live_url, change=-1)
+
+                job = analysis.submit(run_render)
                 if bounded:
                     job.add_done_callback(lambda _: capacity.release())
                 return folder
@@ -119,7 +162,7 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                 screening = (scout.model, scout.threshold, {"vision_model": scout.vision_model}) if scout.review_final and settings.render else None
                 finished = analysis.submit(render_job, path, result,
                                            replace(settings, save_review=False) if release else settings,
-                                           release, screening)
+                                           release, screening, False, True)
                 finished.result()
                 return True
 
@@ -157,7 +200,7 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                         return
                     stop.wait(max(0, next_check - time.monotonic()))
 
-            def schedule_live(path, block, selected=None, *, capture_dir, result, settings):
+            def schedule_live(path, block, selected=None, *, capture_dir, result, settings, live_url):
                 screening = None
                 if selected:
                     end = min(selected[1], probe(path)[0])
@@ -168,20 +211,29 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                         screening = (scout.model, scout.threshold, dict(prior, vision_model=scout.vision_model))
                         settings = replace(settings, save_review=False)
                 return schedule(path, result / block.relative_to(capture_dir), settings,
-                                bounded=scout.enabled, managed=scout.enabled, screening=screening, live_review=screening is not None)
+                                bounded=scout.enabled, managed=scout.enabled, screening=screening, live_review=screening is not None,
+                                live_url=live_url)
 
             def monitor(url, folder, callback):
+                def state(value):
+                    activity_update(url, state=value)
+                try:
+                    monitor_source(url, folder, callback, state)
+                finally:
+                    state("Captura encerrada")
+
+            def monitor_source(url, folder, callback, state):
                 if not scout.enabled:
                     capture(sys.executable, url, folder, minutes, callback, stop, log, wait_minutes,
                             continuous=scout.continuous, catchup=scout.catchup,
-                            offline_seconds=scout.live_poll_hours * 3600 or 45)
+                            offline_seconds=scout.live_poll_hours * 3600 or 45, on_state=state)
                     return
-                detector = LiveScout(folder, url, scout, callback, log)
+                detector = LiveScout(folder, url, scout, callback, log, editorial_weights=weights)
                 try:
                     capture(sys.executable, url, folder, minutes, detector.receive, stop,
                             log, wait_minutes, segment_seconds=15,
                             continuous=scout.continuous, catchup=scout.catchup,
-                            offline_seconds=scout.live_poll_hours * 3600 or 45)
+                            offline_seconds=scout.live_poll_hours * 3600 or 45, on_state=state)
                 finally:
                     detector.close()
 
@@ -199,7 +251,7 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                 settings = replace(options, **overrides)
                 if kind == "file":
                     screening = (scout.model, scout.threshold, {"vision_model": scout.vision_model}) if scout.review_final and settings.render else None
-                    schedule(Path(source), result, settings, screening=screening)
+                    schedule(Path(source), result, settings, screening=screening, recording=True)
                 else:
                     folder = batch / "Capturas" / source_name
                     folder.mkdir(parents=True)
@@ -211,7 +263,7 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                                                            result / "Replays", settings))
                         if scout.replay_only:
                             continue
-                        callback = partial(schedule_live, capture_dir=folder, result=result,
+                        callback = partial(schedule_live, capture_dir=folder, result=result, live_url=source,
                                            settings=replace(settings, count=1, montage=False) if scout.enabled else settings)
                         futures.append(lives.submit(safely, monitor, source, folder, callback))
             for future in futures:

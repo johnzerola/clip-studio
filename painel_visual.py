@@ -8,7 +8,7 @@ import tema
 from broll_library import STILLS
 
 
-def thumbnail(asset):
+def thumbnail(asset, *, size=(340, 188), landscape=False):
     import cv2
     import numpy as np
 
@@ -31,7 +31,12 @@ def thumbnail(asset):
     if frame is None:
         return None
     height, width = frame.shape[:2]
-    scale = min(340 / width, 188 / height, 1)
+    if landscape and width / height < 1.5:
+        crop = min(height, width * 2 // 3)
+        top = max(0, round((height - crop) * .38))
+        frame = frame[top:top+crop]
+        height = crop
+    scale = min(size[0] / width, size[1] / height, 1)
     frame = cv2.resize(frame, (max(1, round(width * scale)), max(1, round(height * scale))),
                        interpolation=cv2.INTER_AREA)
     ok, png = cv2.imencode(".png", frame)

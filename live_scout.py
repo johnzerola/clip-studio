@@ -13,7 +13,7 @@ import ssl
 import statistics
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -43,6 +43,8 @@ class ScoutSettings:
     performance: str = "equilibrado"
     trim_inactive: bool = True
     vision_model: str = ""
+    transcribe_recordings: bool = False
+    autopilot: object = field(default=None, repr=False)
 
 
 class TwitchPulse:
@@ -164,7 +166,7 @@ class YouTubePulse(TwitchPulse):
 
 class LiveScout:
     """Closed segments provide bounded context while recording continues."""
-    def __init__(self, capture_root, url, settings, schedule, log):
+    def __init__(self, capture_root, url, settings, schedule, log, *, editorial_weights=None):
         self.root = capture_root.resolve()
         self.settings, self.schedule, self.log = settings, schedule, log
         self.pending = queue.Queue(maxsize=12 if settings.catchup else 5)
@@ -174,6 +176,7 @@ class LiveScout:
         self.last_segment = None
         self.finished = threading.Event()
         parsed = urlparse(url)
+        self.editorial_weights = editorial_weights or {}
         self.chat = TwitchPulse(parsed.path.strip("/"), log) if parsed.hostname == "www.twitch.tv" else None
         youtube_id = re.fullmatch(r"/live/([A-Za-z0-9_-]{11})", parsed.path)
         if parsed.hostname == "www.youtube.com" and youtube_id:
@@ -270,6 +273,12 @@ class LiveScout:
         if not picks:
             return
         measure = self.chat.measure if self.chat and near_realtime else None
+        from workspace_data import topic
+        for item in picks:
+            theme = topic(item["transcript"])
+            bias = self.editorial_weights.get(theme, 0)
+            item["features"].update(topic=theme, retention_bias=bias)
+            item["av_score"] = max(0, min(100, item["av_score"] + bias))
         pick = rank_chat(picks, duration, arrival, measure)[0]
         start, end = pick["start"], pick["end"]
         count, ratio, people, bonus = pick["chat"]

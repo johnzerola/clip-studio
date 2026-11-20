@@ -70,3 +70,15 @@ O servidor de trabalhos usa stdio. Use o MCP com clientes locais de confiança e
 ![Janela de trabalhos compartilhados com três sessões de demonstração](img/trabalhos.png)
 
 Para a triagem, `--vision-model` na CLI e `vision_model` no MCP ativam a análise opcional de quadros quando a revisão está ligada. Use `--keep-idle` ou `trim_inactive: false` para desativar o filtro combinado de espera. [Entenda a nota e a recuperação de critérios](VIRALIDADE.md).
+
+
+## Transcrição de gravações e frequência de monitoramento
+
+Use `--transcribe-recordings --model qwen3:4b` na CLI ou
+`"transcribe_recordings": true, "model": "qwen3:4b"` no MCP. O trabalho
+inclui o arquivo com os tempos das falas em `outputs.transcripts`.
+Use `--minutes 0 --live-poll-hours 2` para monitorar um canal continuamente e
+verificar a cada duas horas quando offline. No MCP, defina `minutes: 0` e
+`live_poll_hours: 2`.
+
+No Studio, use `--hook-text`, `--effects-model qwen3:4b` e `--smart-reframe`. No MCP os campos correspondentes são `hook_text`, `effects_model` e `smart_reframe`.

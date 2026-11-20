@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 for name in ("tkinter", "faster_whisper", "cv2", "numpy", "yt_dlp", "streamlink",
-             "truststore", "opentimelineio", "painel", "sessions", "posting_panel"):
+             "truststore", "opentimelineio", "ffpyplayer.player", "painel", "sessions", "posting_panel"):
     importlib.import_module(name)
 
 for name in ("ffmpeg", "ffprobe"):

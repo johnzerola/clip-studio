@@ -53,6 +53,8 @@ def parse_ranges(value):
 class Panel:
     def __init__(self, root):
         self.root = root
+        self.appearance = tk.StringVar(value="Sistema")
+        self.review_layout = tk.StringVar(value="Galeria")
         self.events = queue.Queue()
         self.stop = threading.Event()
         self.active = False
@@ -70,6 +72,11 @@ class Panel:
         self.performance = tk.StringVar(value=PROFILES["leve"].label)
         self.session_status = tk.StringVar(value="Aguardando início")
         self.captions = tk.BooleanVar(value=True)
+        self.channel_handle = tk.StringVar()
+        self.autopilot = None
+        self.hook_text = tk.StringVar()
+        self.creative_effects = tk.BooleanVar(value=False)
+        self.smart_reframe = tk.BooleanVar(value=False)
         self.montage = tk.BooleanVar(value=True)
         self.auto_face = tk.BooleanVar(value=True)
         self.look = tk.StringVar(value="Shorts GTA")
@@ -88,7 +95,9 @@ class Panel:
         self.replay_period = tk.IntVar(value=0)
         self.replay_only = tk.BooleanVar(value=False)
         self.replay_gib = tk.IntVar(value=12)
-        self.live_poll_hours = tk.IntVar(value=0)
+        self.live_poll_hours = tk.IntVar(value=1)
+        self.recording_transcript = tk.BooleanVar(value=True)
+        self.convert_live_link = tk.BooleanVar(value=False)
         self.polish = tk.BooleanVar(value=True)
         self.voice_polish = tk.BooleanVar(value=True)
         self.music_mode = tk.StringVar(value=MUSIC_MODES[0])
@@ -118,12 +127,12 @@ class Panel:
                               self.speech_gaps)
         self.apply_preset()
         self.saved_fields = {key: getattr(self, key) for key in (
-            "preset", "style", "corner", "face", "game", "duration", "count", "minutes", "workers", "performance",
-            "captions", "montage", "silence", "repeats", "fillers", "speech", "pause", "noise", "auto_face",
+            "appearance", "review_layout", "preset", "style", "corner", "face", "game", "duration", "count", "minutes", "workers", "performance",
+            "captions", "channel_handle", "creative_effects", "smart_reframe", "montage", "silence", "repeats", "fillers", "speech", "pause", "noise", "auto_face",
             "speech_gaps", "wait_minutes", "output_dir", "look", "hook", "polish", "broll_dir", "close_focus",
             "scout_live", "scout_model", "vision_model", "scout_threshold", "scout_cleanup", "scout_review",
             "scout_continuous", "scout_catchup", "compression", "trim_live",
-            "replay_count", "replay_period", "replay_only", "replay_gib", "live_poll_hours",
+            "replay_count", "replay_period", "replay_only", "replay_gib", "live_poll_hours", "recording_transcript",
             "voice_polish", "music_mode", "music", "music_db", "transition", "sfx", "sfx_peak")}
         source_text = ""
         migrate_broll = False
@@ -142,20 +151,34 @@ class Panel:
                     self.saved_fields[key].set(value)
         except (OSError, ValueError, AttributeError, tk.TclError):
             pass
+        if self.appearance.get() not in tema.MODES:
+            self.appearance.set("Sistema")
+        if self.review_layout.get() not in ("Galeria", "Sala de revisão"):
+            self.review_layout.set("Galeria")
         if migrate_broll:
             self.broll_selected.update(asset.key for asset in self.library_assets() if asset.group == "Minha pasta")
         self.update_broll_count()
         root.title("Clip Studio • Lives, VODs e arquivos")
-        tema.apply(root)
-        root.geometry("1030x860")
-        root.minsize(900, 735)
-        header = tk.Frame(root, bg=tema.DEEP, padx=24, pady=15)
-        header.pack(fill="x")
-        tk.Label(header, text="Clip Studio", bg=tema.DEEP, fg="#ffffff",
-                 font=("Segoe UI Semibold", 25)).pack(anchor="w")
-        tk.Label(header, text="Capture, edite e revise cortes de lives e vídeos.",
-                 bg=tema.DEEP, fg="#c6dedf", font=("Segoe UI", 10)).pack(anchor="w", pady=(1, 0))
-        frame = ttk.Frame(root, padding=(20, 12, 20, 14))
+        tema.apply(root, self.appearance.get())
+        root.geometry("1230x810")
+        root.minsize(990, 700)
+        shell = ttk.Frame(root)
+        shell.pack(fill="both", expand=True)
+        sidebar = ttk.Frame(shell, style="Nav.TFrame", padding=(12, 17))
+        sidebar.pack(side="left", fill="y")
+        ttk.Label(sidebar, text="Clip Studio", style="Brand.TLabel",
+                  font=("Segoe UI Semibold", 20), padding=(8, 0, 10, 18)).pack(fill="x")
+        workspace = ttk.Frame(shell)
+        workspace.pack(side="left", fill="both", expand=True)
+        top = ttk.Frame(workspace, padding=(18, 9))
+        top.pack(fill="x")
+        ttk.Label(top, textvariable=self.session_status, style="Muted.TLabel").pack(side="left")
+        theme_choice = ttk.Combobox(top, textvariable=self.appearance, values=tema.MODES,
+                                    width=9, state="readonly")
+        theme_choice.pack(side="right")
+        ttk.Label(top, text="Tema", style="Muted.TLabel").pack(side="right", padx=(0, 7))
+        ttk.Separator(workspace).pack(fill="x")
+        frame = ttk.Frame(workspace, padding=(18, 9, 18, 12))
         frame.pack(fill="both", expand=True)
         frame.columnconfigure(1, weight=1)
         frame.rowconfigure(14, weight=1)
@@ -165,9 +188,9 @@ class Panel:
         ttk.Label(source_card, text="Fontes", style="Heading.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(source_card, text="Um link ou arquivo por linha. Twitch, Kick, YouTube, TikTok e X.",
                   style="Card.TLabel").grid(row=1, column=0, sticky="w", pady=(2, 7))
-        self.sources = tk.Text(source_card, height=3, font=("Consolas", 11), wrap="none",
-                               bg="#ffffff", fg=tema.INK, insertbackground=tema.INK, relief="flat",
-                               highlightthickness=1, highlightbackground="#c8dbdd", highlightcolor=tema.TEAL)
+        self.sources = tk.Text(source_card, height=3, font=("Segoe UI", 10), wrap="none",
+                               bg=tema.PAPER, fg=tema.INK, insertbackground=tema.INK, relief="flat",
+                               highlightthickness=1, highlightbackground=tema.active["line"], highlightcolor=tema.TEAL)
         self.sources.grid(row=2, column=0, sticky="ew")
         self.sources.insert("1.0", source_text)
         ttk.Button(source_card, text="Adicionar arquivos…", command=self.add_files).grid(row=2, column=1, sticky="n", padx=(10, 0))
@@ -175,17 +198,72 @@ class Panel:
             row=3, column=0, sticky="w", pady=(7, 0))
         ttk.Button(source_card, text="Abrir plano…", command=lambda: self.show_trim(from_plan=True)).grid(
             row=3, column=1, sticky="ew", padx=(10, 0), pady=(7, 0))
-        tabs = ttk.Notebook(frame)
+        workspace_style = ttk.Style(root)
+        workspace_style.layout("Workspace.TNotebook.Tab", [])
+        tabs = ttk.Notebook(frame, style="Workspace.TNotebook")
         tabs.grid(row=11, column=0, columnspan=3, sticky="ew", pady=(12, 4))
-        editorial, audio_tab, auto_tab, ready_tab = [ttk.Frame(tabs, padding=(12, 10)) for _ in range(4)]
-        for tab, title in zip((editorial, audio_tab, auto_tab, ready_tab),
-                              ("Edição", "Som e B-roll", "Lives e gravações", "Prontos para postar")):
+        home, editorial, audio_tab, auto_tab, ready_tab, agenda_tab = [
+            ttk.Frame(tabs, padding=(3, 6)) for _ in range(6)
+        ]
+        navigation = ((home, "Visão geral"), (auto_tab, "Lives e gravações"), (editorial, "Edição"),
+                      (audio_tab, "Som e B-roll"), (ready_tab, "Postagens"), (agenda_tab, "Agenda"))
+        buttons = {}
+        for tab, title in navigation:
             tabs.add(tab, text=title)
+            button = ttk.Button(sidebar, text=title, command=lambda page=tab: tabs.select(page),
+                                style="Nav.TButton", width=17)
+            button.pack(fill="x", pady=2)
+            buttons[str(tab)] = button
+        from agenda_panel import Agenda
+        from dashboard import Dashboard
         from publish_panel import PublishTab
-        self.publish_tab = PublishTab(ready_tab, self.output_path, self.open_posting)
-        tabs.bind("<<NotebookTabChanged>>", lambda _e: self.publish_tab.refresh()
-                  if tabs.select() == str(ready_tab) else None)
-        tabs.select(editorial)
+        self.dashboard = Dashboard(home, self.output_path, lambda: tabs.select(auto_tab),
+                                   lambda: tabs.select(ready_tab), self.open_posting)
+        self.publish_tab = PublishTab(ready_tab, self.output_path, self.open_posting, self.scout_model.get,
+                                      self.configure_autopilot, self.review_layout, self.save_preferences)
+        self.agenda = Agenda(agenda_tab, self.output_path, lambda: tabs.select(ready_tab))
+
+        def apply_theme(save=False):
+            tema.apply(root, self.appearance.get())
+            palette = tema.active
+            self.sources.configure(bg=tema.PAPER, fg=tema.INK, insertbackground=tema.INK,
+                                   highlightbackground=palette["line"], highlightcolor=palette["focus"])
+            self.logs.configure(bg=palette["media"], fg=palette["media_text"])
+            self.publish_tab.gallery.theme_changed()
+            if save:
+                self.save_preferences()
+
+        def follow_system():
+            if self.appearance.get() == "Sistema" and tema.resolve("Sistema") is not tema.active:
+                apply_theme()
+            root.after(3500, follow_system)
+
+        def navigate(_event=None):
+            current = tabs.select()
+            for key, button in buttons.items():
+                button.configure(style="NavActive.TButton" if key == current else "Nav.TButton")
+            if current != str(ready_tab):
+                self.publish_tab.gallery.player.stop()
+            if current in (str(home), str(ready_tab), str(agenda_tab)):
+                source_card.grid_remove()
+                quick.grid_remove()
+                if not self.active:
+                    bar.grid_remove()
+                    self.logs.grid_remove()
+            else:
+                source_card.grid()
+                quick.grid()
+                bar.grid()
+                self.logs.grid()
+            if current == str(ready_tab):
+                self.publish_tab.refresh()
+            elif current == str(home):
+                self.dashboard.refresh()
+            elif current == str(agenda_tab):
+                self.agenda.refresh()
+
+        tabs.bind("<<NotebookTabChanged>>", navigate)
+        tabs.select(home)
         self.advanced = tk.Toplevel(root)
         self.advanced.withdraw()
         self.advanced.title("Configurações avançadas")
@@ -210,6 +288,17 @@ class Panel:
                      state="readonly", width=27).pack(side="left", padx=(6, 15))
         ttk.Checkbutton(quick, text="Legendas", variable=self.captions).pack(side="left")
         ttk.Checkbutton(quick, text="Detectar webcam", variable=self.auto_face).pack(side="left", padx=8)
+        brand = ttk.Frame(editorial)
+        brand.grid(row=8, column=0, columnspan=5, sticky="w", pady=(8, 0))
+        ttk.Label(brand, text="@ do canal").pack(side="left")
+        ttk.Entry(brand, textvariable=self.channel_handle, width=23).pack(side="left", padx=8)
+        ttk.Label(brand, text="Assinatura no vídeo. Deixe vazio se preferir.", style="Muted.TLabel").pack(side="left")
+        creative = ttk.Frame(editorial)
+        creative.grid(row=9, column=0, columnspan=5, sticky="w", pady=(8,0))
+        ttk.Label(creative, text="Gancho personalizado").pack(side="left")
+        ttk.Entry(creative, textvariable=self.hook_text, width=26).pack(side="left", padx=8)
+        ttk.Checkbutton(creative, text="Efeitos por IA", variable=self.creative_effects).pack(side="left", padx=(2,7))
+        ttk.Checkbutton(creative, text="Reenquadrar rosto 9:16", variable=self.smart_reframe).pack(side="left")
         settings = ttk.Frame(editorial)
         settings.grid(row=4, columnspan=5, sticky="w", pady=(5, 0))
         for label, val, low, high in [("Duração (s)", self.duration, 10, 180), ("Clipes por trecho", self.count, 1, 8)]:
@@ -316,6 +405,17 @@ class Panel:
         ttk.Checkbutton(archive_help, text="Remover esperas sem fala nem ação", variable=self.trim_live).pack(side="left", padx=8)
         ttk.Label(archive_help, text="0 gravações = desativado. 0 h = buscar gravações uma vez.",
                   style="Muted.TLabel").pack(side="left", padx=8)
+        recordings = ttk.Frame(auto_tab)
+        recordings.grid(row=5, columnspan=5, sticky="w", pady=(7, 0))
+        ttk.Checkbutton(recordings, text="Transcrever a gravação inteira e selecionar cortes com Ollama",
+                        variable=self.recording_transcript).pack(side="left")
+        ttk.Label(recordings, text="Use o link direto da gravação ou um arquivo.",
+                  style="Muted.TLabel").pack(side="left", padx=8)
+        recording_actions = ttk.Frame(auto_tab)
+        recording_actions.grid(row=6, columnspan=5, sticky="w", pady=(8,0))
+        ttk.Button(recording_actions, text="Abrir transcrição…", command=self.open_transcription).pack(side="left")
+        ttk.Checkbutton(recording_actions, text="Links /live/ID do YouTube já terminaram",
+                        variable=self.convert_live_link).pack(side="left", padx=9)
         visual_options = ttk.Frame(framing)
         visual_options.grid(row=11,columnspan=5,sticky="ew",pady=(5,0))
         ttk.Label(visual_options,text="Modelo visual Ollama (opcional)").pack(side="left")
@@ -331,12 +431,10 @@ class Panel:
                                 style="Primary.TButton" if render else "TButton")
             button.pack(side="left", padx=(0, 8))
             self.buttons.append(button)
-        self.stop_button = ttk.Button(bar, text="Parar captura", command=self.stop.set, state="disabled")
+        self.stop_button = ttk.Button(bar, text="Parar trabalho", command=self.stop.set, state="disabled")
         self.stop_button.pack(side="left")
         ttk.Button(bar, text="Abrir resultados", command=self.open_output).pack(side="right")
         ttk.Button(bar, text="Fila de postagem", command=self.open_posting).pack(side="right", padx=8)
-        ttk.Label(frame, textvariable=self.session_status, style="Muted.TLabel").grid(
-            row=14, column=0, columnspan=2, sticky="w", pady=(5, 3))
         ttk.Button(frame, text="Trabalhos CLI/MCP…", command=self.open_jobs).grid(
             row=14, column=1, sticky="e", padx=(0, 10), pady=(0, 5))
         ttk.Button(frame, text="Configurações avançadas…", command=self.show_advanced).grid(
@@ -346,8 +444,32 @@ class Panel:
         self.logs = tk.Text(frame, height=8, state="disabled", wrap="word", bg="#152b33", fg="#d7edeb",
                             font=("Consolas", 10), padx=12, pady=9, relief="flat")
         self.logs.grid(row=15, columnspan=3, sticky="nsew")
+        root.after_idle(navigate)
+        root.after_idle(apply_theme)
+        root.after(3500, follow_system)
+        theme_choice.bind("<<ComboboxSelected>>", lambda _: apply_theme(save=True))
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.after(150, self.poll)
+        root.after(1800, self.check_for_updates)
+
+    def check_for_updates(self):
+        from update_check import check_for_update
+
+        check_for_update(lambda version, url: self.root.after(
+            0, lambda: self.offer_update(version, url)))
+
+    def offer_update(self, version, url):
+        if not self.root.winfo_exists():
+            return
+        if messagebox.askyesno(
+            "Atualização disponível",
+            f"O Clip Studio {version} está disponível.\n\n"
+            "Quer abrir a página da atualização no GitHub?",
+            parent=self.root,
+        ):
+            import webbrowser
+
+            webbrowser.open(url)
 
     @staticmethod
     def field(frame, row, label, widget):
@@ -438,6 +560,13 @@ class Panel:
             raise ValueError("Escolha uma pasta de saída com caminho absoluto.")
         return Path(value).resolve()
 
+    def open_transcription(self):
+        path = filedialog.askopenfilename(parent=self.root, title="Abrir transcrição",
+                                          initialdir=str(self.output_path()),
+                                          filetypes=[("Transcrição por frase", "*.txt"), ("Palavras e tempos", "*.jsonl")])
+        if path:
+            os.startfile(path)
+
     def open_output(self):
         try:
             path = self.output_path()
@@ -492,6 +621,18 @@ class Panel:
             return
         self.jobs_window = open_jobs(self.root)
 
+    def configure_autopilot(self):
+        from studio_panel import autopilot_dialog
+
+        if self.active:
+            messagebox.showinfo("Piloto automático", "Configure antes de iniciar a próxima captura ou edição.")
+            return
+
+        def apply(config):
+            self.autopilot = config
+            self.publish_tab.show_autopilot(config)
+        autopilot_dialog(self.root, self.autopilot, apply)
+
     def open_posting(self):
         from posting_panel import show_queue
 
@@ -527,6 +668,7 @@ class Panel:
         self.root.after(150, self.poll)
 
     def close(self):
+        self.publish_tab.gallery.player.stop()
         if self.publish_tab.busy:
             messagebox.showinfo("Publicação em andamento", "Aguarde o resultado do YouTube antes de fechar.")
             return
@@ -558,6 +700,8 @@ class Panel:
                     sources.append((str(path.resolve()), "file", regions))
                 else:
                     url, vod = live_source(value)
+                    if self.convert_live_link.get() and url.startswith("https://www.youtube.com/live/"):
+                        url, vod = url.replace("/live/", "/watch?v=", 1), True
                     sources.append((url, "vod" if vod else "live", regions))
             sources = list({(source, kind, tuple(regions)): (source, kind, regions)
                             for source, kind, regions in sources}.values())
@@ -608,7 +752,8 @@ class Panel:
                                   replay_period=self.replay_period.get(), replay_only=self.replay_only.get(),
                                   replay_gib=self.replay_gib.get(), live_poll_hours=self.live_poll_hours.get(),
                                   performance=next(key for key,p in PROFILES.items() if p.label == self.performance.get()),
-                                  trim_inactive=self.trim_live.get(), vision_model=self.vision_model.get().strip())
+                                  trim_inactive=self.trim_live.get(), vision_model=self.vision_model.get().strip(),
+                                  transcribe_recordings=self.recording_transcript.get(), autopilot=self.autopilot)
             if scout.replay_count or scout.replay_period or scout.replay_only:
                 from replay_library import archive_url
                 if not lives or scout.replay_count not in (2, 3) or scout.replay_period not in (0, 1, 2, 3):
@@ -627,7 +772,10 @@ class Panel:
                               LOOKS[self.look.get()], self.hook.get(), self.polish.get(), "", focus,
                               self.voice_polish.get(), 130, music, music_db,
                               self.transition.get(), self.sfx.get(), self.sfx_peak.get(), self.compression.get(),
-                              broll_assets=broll_assets, contextual_broll=False,
+                              broll_assets=broll_assets, contextual_broll=False, channel_handle=self.channel_handle.get(),
+                              hook_text=self.hook_text.get(),
+                              effects_model=self.scout_model.get().strip() if self.creative_effects.get() else "",
+                              smart_reframe=self.smart_reframe.get(),
                               auto_music=self.music_mode.get() == MUSIC_MODES[0],
                               keep_manual_edges=bool(manual and not lives and sources[0][1] == "file"
                                                      and self.visual_trim == (Path(sources[0][0]), self.manual.get())))
@@ -645,8 +793,7 @@ class Panel:
         self.stop.clear()
         for button in self.buttons:
             button.state(["disabled"])
-        if any(kind != "file" for _, kind, _ in sources):
-            self.stop_button.state(["!disabled"])
+        self.stop_button.state(["!disabled"])
         threading.Thread(target=self.run, args=(sources, options, minutes, workers, output, wait_minutes, scout),
                          daemon=True).start()
 

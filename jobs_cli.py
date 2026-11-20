@@ -38,6 +38,9 @@ def prepare(request):
     count = int(request.get("count", 1))
     minutes = int(request.get("minutes", 5))
     threshold = int(request.get("threshold", 60))
+    poll_hours = int(request.get("live_poll_hours", 1))
+    if poll_hours not in (0, 1, 2, 3):
+        raise ValueError("Escolha uma frequência de 0, 1, 2 ou 3 horas.")
     if style not in STYLES or profile not in PROFILES or mode not in ("plan", "render"):
         raise ValueError("Modo, estilo ou perfil inválido.")
     if not (10 <= duration <= 180 and 1 <= count <= 8 and 0 <= minutes <= 720 and 20 <= threshold <= 95):
@@ -53,11 +56,14 @@ def prepare(request):
                    mode == "render", manual=manual, cleanup=Cleanup(True, True, True, True, 1.2, -40),
                    auto_face=True, look="shorts", polish=True, voice_polish=True, jcut_ms=130,
                    transition="v9", compression="compacto", auto_music=bool(request.get("music", True)),
-                   contextual_broll=False, keep_manual_edges=bool(manual))
+                   contextual_broll=False, keep_manual_edges=bool(manual), channel_handle=request.get("channel_handle") or "",
+                   hook_text=request.get("hook_text") or "", effects_model=request.get("effects_model") or "",
+                   smart_reframe=bool(request.get("smart_reframe", False)))
     scout = ScoutSettings(model=str(request.get("model") or ""), threshold=threshold, clip_seconds=duration,
                           review_final=bool(request.get("review", False)), continuous=minutes == 0,
-                          catchup=bool(request.get("catchup", False)), performance=profile,
+                          catchup=bool(request.get("catchup", False)), performance=profile, live_poll_hours=poll_hours,
                           trim_inactive=bool(request.get("trim_inactive", True)),
+                          transcribe_recordings=bool(request.get("transcribe_recordings", False)),
                           vision_model=str(request.get("vision_model") or ""))
     return sources, opts, minutes, 1, out, 0, scout
 
@@ -102,11 +108,17 @@ def main():
     create.add_argument("--minutes", type=int, default=5)
     create.add_argument("--ranges", default="")
     create.add_argument("--model", default="")
+    create.add_argument("--live-poll-hours", choices=(0,1,2,3), default=1, type=int)
+    create.add_argument("--transcribe-recordings", action="store_true")
     create.add_argument("--vision-model", default="")
     create.add_argument("--keep-idle", dest="trim_inactive", action="store_false")
     create.add_argument("--threshold", type=int, default=60)
     create.add_argument("--review", action="store_true")
     create.add_argument("--catchup", action="store_true")
+    create.add_argument("--channel-handle", default="", help="@ do seu canal no vídeo")
+    create.add_argument("--hook-text", default="")
+    create.add_argument("--effects-model", default="")
+    create.add_argument("--smart-reframe", action="store_true")
     create.add_argument("--no-captions", dest="captions", action="store_false")
     create.add_argument("--no-music", dest="music", action="store_false")
     create.add_argument("--wait", action="store_true")

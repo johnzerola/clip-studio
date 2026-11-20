@@ -14,7 +14,13 @@ from viral_rank import OLLAMA
 from runtime_profile import ollama_resources
 from clip_quality import (media_signature, register_similarity, retention_adjustments, retention_values)
 
-STUDIOS = {"YouTube": "https://studio.youtube.com/", "TikTok": "https://www.tiktok.com/tiktokstudio/upload"}
+STUDIOS = {
+    "YouTube": "https://studio.youtube.com/",
+    "TikTok": "https://www.tiktok.com/tiktokstudio/upload",
+    "Instagram": "https://business.facebook.com/latest/",
+    "Facebook": "https://business.facebook.com/latest/",
+    "X": "https://x.com/compose/post",
+}
 STATES = ("aguardando", "rascunho confirmado", "agendado confirmado", "publicado confirmado")
 STOPWORDS = set("a o de da do das dos que pra para com não uma por foi mais aí aqui ele ela vou isso esse essa só muito tem já como seu sua".split())
 
@@ -102,6 +108,7 @@ def db_open(folder):
             title TEXT, description TEXT, tags TEXT, trends TEXT,
             updated TEXT DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS clip_exports (path TEXT PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS clip_reviews (clip TEXT PRIMARY KEY, detail TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS clip_signatures (
             clip TEXT PRIMARY KEY, speech TEXT NOT NULL, visual TEXT NOT NULL, duration REAL NOT NULL,
@@ -162,7 +169,7 @@ def enqueue(folder, candidate, media, verdict, transcript, hook, model):
         db.execute("INSERT OR REPLACE INTO clip_reviews VALUES (?,?)",
                    (key, json.dumps({field: verdict[field] for field in
                                      ("reason","review_path","narrative_rules","action_rules","model",
-                                      "semantic","visual","vision_model","speech_seconds","final_motion","threshold") if field in verdict},
+                                      "semantic","visual","vision_model","speech_seconds","final_motion","threshold","studio_transcript") if field in verdict},
                                     ensure_ascii=False)))
         if media:
             register_similarity(db, key, words, duration, visual, source, verdict.get("ranges", ()))
@@ -178,8 +185,14 @@ def ranked(folder, limit=250, *, platform=None):
                                 (limit,)).fetchall()
         if platform is None:
             return candidates
+        from workspace_data import observed, topic
+
         changes, _ = retention_adjustments(db, platform)
-        rows = [dict(row, weighted_score=max(0, min(100, row["score"] + changes.get(row["score"] // 10, 0)))
+        themes = {item["id"]: topic(f"{item['title']} {item['description']}") for item in candidates}
+        benefits = {theme: observed(db, platform, theme) for theme in set(themes.values())}
+        rows = [dict(row, topic=themes[row["id"]], topic_points=benefits[themes[row["id"]]],
+                     weighted_score=max(0, min(100, row["score"] + changes.get(row["score"] // 10, 0)
+                                               + benefits[themes[row["id"]]]))
                      if row["result"] == "ready" else row["score"]) for row in candidates]
         return sorted(rows, key=lambda row: (row["result"] != "ready", -row["weighted_score"]))
 
