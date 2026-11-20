@@ -6,6 +6,8 @@
 
 **[Baixar para Windows](https://github.com/johnzerola/clip-studio/releases/latest/download/Clip-Studio-Windows.zip)** · [Guia ilustrado](docs/GUIA-DO-PAINEL.md) · [Arquitetura](docs/ARQUITETURA.md) · [Contribuir](#contribuir)
 
+[Notas da versão 0.4.0](docs/RELEASE-0.4.0.md)
+
 ![Visão geral do Clip Studio com dados de demonstração](docs/img/visao-geral.png)
 
 [Lives, postagens e modelos locais](docs/LIVES-E-POSTAGENS.md) · [Studio, UGC e integração OpenShorts](docs/INTEGRACAO-OPENSHORTS.md)
