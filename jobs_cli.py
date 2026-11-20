@@ -34,6 +34,9 @@ def prepare(request):
     style = request.get("style", "dynamic")
     profile = request.get("performance", "leve")
     mode = request.get("mode", "render")
+    acceleration = request.get("acceleration", "auto")
+    if acceleration not in ("auto", "cpu"):
+        raise ValueError("Escolha aceleração automática ou CPU.")
     duration = int(request.get("seconds", 45))
     count = int(request.get("count", 1))
     minutes = int(request.get("minutes", 5))
@@ -68,7 +71,8 @@ def prepare(request):
                    contextual_broll=False, keep_manual_edges=bool(manual), channel_handle=request.get("channel_handle") or "",
                    hook_text=request.get("hook_text") or "", effects_model=request.get("effects_model") or "",
                    smart_reframe=bool(request.get("smart_reframe", False)), speech_language=language,
-                   target_shot_seconds=target_shot_seconds, full_hd=capture_height == 1080)
+                   target_shot_seconds=target_shot_seconds, full_hd=capture_height == 1080,
+                   precompress=bool(request.get("precompress", True)))
     scout = ScoutSettings(model=str(request.get("model") or ""), threshold=threshold, clip_seconds=duration,
                           review_final=bool(request.get("review", False)), continuous=minutes == 0,
                           catchup=bool(request.get("catchup", False)), performance=profile, live_poll_hours=poll_hours,
@@ -76,7 +80,7 @@ def prepare(request):
                           transcribe_recordings=bool(request.get("transcribe_recordings", False)),
                           vision_model=str(request.get("vision_model") or ""), speech_language=language,
                           capture_height=capture_height, replay_after_live=bool(request.get("replay_after_live", False)),
-                          replay_height=replay_height)
+                          replay_height=replay_height, acceleration=acceleration)
     return sources, opts, minutes, 1, out, 0, scout
 
 
@@ -115,6 +119,8 @@ def main():
     create.add_argument("--mode", choices=("plan", "render"), default="render")
     create.add_argument("--style", choices=STYLES, default="dynamic")
     create.add_argument("--performance", choices=tuple(PROFILES), default="leve")
+    create.add_argument("--acceleration", choices=("auto", "cpu"), default="auto")
+    create.add_argument("--no-precompress", dest="precompress", action="store_false")
     create.add_argument("--seconds", type=int, default=45)
     create.add_argument("--count", type=int, default=1)
     create.add_argument("--minutes", type=int, default=5)

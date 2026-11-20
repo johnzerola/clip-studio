@@ -39,6 +39,11 @@ def action(command, data):
         import subprocess
         subprocess.Popen([sys.executable, str(ROOT / "painel.py")], cwd=ROOT)
         return {"message": "Controles avançados abertos."}
+    if command == "ai-setup":
+        import subprocess
+        pythonw = str(Path(sys.executable).with_name("pythonw.exe"))
+        subprocess.Popen([pythonw, "-X", "utf8", str(ROOT / "ai_setup.py")], cwd=ROOT)
+        return {"message": "Configuração da IA local aberta."}
     root = Tk()
     root.withdraw()
     root.attributes("-topmost", True)
@@ -96,9 +101,13 @@ def action(command, data):
         if not 1 <= request.get("minutes", 5) <= 720:
             raise ValueError("Use de 1 a 720 minutos.")
         request["speech_language"] = language
+        request["acceleration"] = data.get("acceleration", "auto")
+        request["precompress"] = bool(data.get("precompress", True))
         if command == "live":
-            request.update(capture_height=height, review=True, model="qwen3.5:4b",
-                           vision_model="qwen3.5:4b", replay_after_live=True, replay_height=replay_height, count=3)
+            from ai_setup import recommended_model
+            model = recommended_model()
+            request.update(capture_height=height, review=True, model=model,
+                           vision_model=model, replay_after_live=True, replay_height=replay_height, count=3)
         row = submit(request, "Hook Spark / " + command)
         result = {"message": "Trabalho adicionado à fila V9.", "id": row["id"]}
         if profile:

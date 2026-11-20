@@ -1,5 +1,6 @@
 """Small offline retrieval index of editorial criteria, authored for Clip Studio."""
 import json
+import math
 import re
 import unicodedata
 from pathlib import Path
@@ -30,8 +31,11 @@ def read_cards(path):
 def retrieve(transcript, evidence, limit=3):
     cards = {row["id"]: row for path in (BASE, LOCAL) for row in read_cards(path)}
     query = terms(transcript[:2000] + " " + " ".join(key for key, value in evidence.items() if value))
-    ranked = sorted(cards.values(), key=lambda row: -len(terms(row["tags"]) & query))
-    matches = [row for row in ranked if terms(row["tags"]) & query]
+    terms_by_card = {key: terms(card["tags"]) for key, card in cards.items()}
+    weights = {term: math.log1p(len(cards) / (1 + sum(term in tags for tags in terms_by_card.values())))
+               for term in query if any(term in tags for tags in terms_by_card.values())}
+    matches = [row for row in cards.values() if terms_by_card[row["id"]] & weights.keys()]
+    matches.sort(key=lambda row: -sum(weights[term] for term in terms_by_card[row["id"]] & weights.keys()))
     if "arco" in cards and cards["arco"] not in matches:
         matches.insert(0, cards["arco"])
     return [{"id":row["id"][:40], "rule":row["rule"][:215]} for row in matches[:limit]]

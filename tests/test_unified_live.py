@@ -1,11 +1,26 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
-from engine import Options, layout_graph, layouts
+from engine import Options, layout_graph, layouts, render_clip
 from live_scout import TwitchPulse
 from viral_rank import chat_bonus, has_chat_reaction, rank_chat
 
 
 class UnifiedLiveTest(unittest.TestCase):
+    def test_failed_gpu_render_retries_with_cpu(self):
+        options = Options("dynamic", "", "", "direito", False, False, 10, 1, True)
+        gpu = ["-c:v", "h264_nvenc"]
+        cpu = ["-c:v", "libx264"]
+        with (TemporaryDirectory() as folder,
+              patch("engine.encoder", side_effect=[gpu, cpu]) as encode,
+              patch("engine._render_clip", side_effect=[RuntimeError("encoder unavailable"), {}]) as render):
+            result = render_clip(Path(folder) / "source.mp4", Path(folder) / "clip.mp4", [], [], options)
+            self.assertTrue(result["gpu_fallback"])
+            self.assertEqual(render.call_count, 2)
+            self.assertTrue(encode.call_args.kwargs["software_only"])
+
     def test_chat_reactions_are_counted_per_viewer(self):
         pulse = TwitchPulse("example", lambda _: None)
         pulse.messages.extend([

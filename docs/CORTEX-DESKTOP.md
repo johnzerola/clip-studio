@@ -18,6 +18,14 @@ Para replays públicos, o Clip Studio transcreve a faixa de áudio separada e ba
 
 A revisão final dá uma nota de 0 a 100. Quando o Ollama e o modelo visual configurado estão acessíveis, o V9 também avalia a fala e três quadros do MP4 pronto. A fila registra se a nota veio de visão, texto ou regras locais.
 
+**Configurar IA local** mostra os modelos instalados e oferece a instalação oficial do Ollama mediante confirmação. Escolha Qwen3.5 4B para revisão multimodal ou 2B para menor consumo de memória. O banco local de critérios combina sinais de fala, ação, enquadramento e chat com as métricas reais de retenção já registradas no Clip Studio. [Modelos Qwen3.5](https://ollama.com/library/qwen3.5)
+
+**Aceleração automática** testa a codificação NVIDIA NVENC, Intel Quick Sync e AMD AMF. O V9 usa CPU se o encoder de GPU falhar. A transcrição tenta CUDA quando disponível e usa CPU se as bibliotecas necessárias estiverem ausentes. Com **Somente CPU**, o V9 evita codificação por GPU. Capturar uma live continua sendo uma cópia do sinal, sem nova codificação.
+
+**Preparar cópia compacta** tenta reduzir fontes de pelo menos 100 MB antes de editar. A cópia deve ter a mesma resolução e faixas, duração equivalente e pelo menos 20% de economia. O Clip Studio amostra três trechos e usa VMAF, ou SSIM quando o FFmpeg não contém VMAF. A cópia fica em uma pasta temporária e o original fica disponível para revisão ou nova edição. A qualidade real e o tamanho variam com o conteúdo. [FFmpeg](https://github.com/FFmpeg/FFmpeg) · [Netflix VMAF](https://github.com/Netflix/vmaf)
+
+Para uma evolução futura, meça primeiro o tempo no FFmpeg e na transcrição. O [whisper.cpp](https://github.com/ggml-org/whisper.cpp) é uma alternativa em C/C++ para testar quando o pacote CUDA atual for grande demais. O [PySceneDetect](https://github.com/Breakthrough/PySceneDetect) pode acrescentar detecção de cortes e transições em replays. Um componente em Rust faz sentido se a medição apontar o controle de buffers e arquivos como gargalo. C# já hospeda a interface Windows.
+
 ### Atualizações
 
 Enquanto a janela está aberta, o aplicativo consulta o canal público a cada 20 minutos. Ao aceitar uma atualização, ele verifica o pacote e instala em uma pasta irmã. A v0.5.1 recebe a migração pelo mesmo canal. Quem instalou uma versão anterior ao verificador pode usar o instalador. O ZIP mantém os nomes que o atualizador antigo reconhece e traz o runtime do painel compactado dentro dele.

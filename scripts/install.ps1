@@ -66,4 +66,4 @@ if (-not $Check -and -not $SkipShortcut) {
         Write-Host "Atalho: $destination"
     }
 }
-Write-Host 'Clip Studio verificado. Ollama é opcional. Para o modelo local: ollama pull qwen3:4b.'
+Write-Host 'Clip Studio verificado. Para preparar o Ollama opcional, abra Configurar IA no painel.'

@@ -49,6 +49,7 @@ class ScoutSettings:
     capture_height: int | None = None
     replay_after_live: bool = False
     replay_height: int = 1440
+    acceleration: str = "auto"
 
 
 class TwitchPulse:

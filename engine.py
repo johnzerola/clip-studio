@@ -77,6 +77,7 @@ class Options:
     speech_language: str = "auto"
     target_shot_seconds: float = 3.0
     full_hd: bool = False
+    precompress: bool = True
 
     @property
     def frame_size(self):
@@ -105,10 +106,13 @@ def command(args, **kwargs):
 
 
 @lru_cache(maxsize=1)
-def encoder():
+def encoder(*, software_only=False, quality=22):
+    hardware = None if software_only else runtime.hardware_encoder("h264", quality)
+    if hardware:
+        return hardware
     available = command(FF + ["-encoders"]).decode("utf-8", "replace")
     if re.search(r"\blibx264\b", available):
-        return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22"]
+        return ["-c:v", "libx264", "-preset", "veryfast", "-crf", str(quality)]
     if re.search(r"\blibopenh264\b", available):
         return ["-c:v", "libopenh264", "-b:v", "4M"]
     raise RuntimeError("O FFmpeg precisa do encoder libx264 ou libopenh264.")
@@ -375,20 +379,43 @@ def transcribe(source, start, end, model=None, *, language="auto"):
     with MODEL_LOCK:
         threads = runtime.active.whisper_threads
         entry = MODELS.get(model)
-        if not entry or entry[0] != threads:
-            MODELS.pop(model, None)
-            config = {"device": "cpu", "compute_type": "int8", "cpu_threads": threads,
+        device = "cpu"
+        if runtime.acceleration == "auto" and runtime.cuda_transcription:
+            from ctranslate2 import get_cuda_device_count
+            try:
+                device = "cuda" if get_cuda_device_count() else "cpu"
+            except RuntimeError:
+                pass
+        if not entry or entry[0] != (threads, device):
+            MODELS.clear()
+
+        def load(target):
+            config = {"device": target, "compute_type": "int8_float16" if target == "cuda" else "int8",
+                      "cpu_threads": threads, "num_workers": 1,
                       "download_root": str(Path(__file__).parent / "models")}
             try:
-                whisper = WhisperModel(model, local_files_only=True, **config)
+                return WhisperModel(model, local_files_only=True, **config)
             except LocalEntryNotFoundError:
-                whisper = WhisperModel(model, **config)
-            MODELS[model] = (threads, whisper)
-        segments, _ = MODELS[model][1].transcribe(samples, word_timestamps=True, vad_filter=True,
-                                               beam_size=1 if model == "tiny" else 5,
-                                               language=None if language == "auto" else language)
-        return [(float(start + w.start), float(start + w.end), w.word.strip())
-                for s in segments for w in (s.words or []) if w.word.strip()]
+                return WhisperModel(model, **config)
+
+        def words(whisper):
+            segments, _ = whisper.transcribe(samples, word_timestamps=True, vad_filter=True,
+                                             beam_size=1 if model == "tiny" else 5,
+                                             language=None if language == "auto" else language)
+            return [(float(start + w.start), float(start + w.end), w.word.strip())
+                    for s in segments for w in (s.words or []) if w.word.strip()]
+
+        try:
+            if model not in MODELS:
+                MODELS[model] = ((threads, device), load(device))
+            return words(MODELS[model][1])
+        except RuntimeError:
+            if device != "cuda" or not runtime.cuda_transcription:
+                raise
+            runtime.cuda_transcription = False
+            MODELS.clear()
+            MODELS[model] = ((threads, "cpu"), load("cpu"))
+            return words(MODELS[model][1])
 
 
 def audio_silences(source, low, high, cleanup):
@@ -472,11 +499,24 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 
 def render_clip(source, destination, shots, words, options, hook="", timing_words=None):
-    with TemporaryDirectory(prefix=".render-", dir=destination.parent) as directory:
-        return _render_clip(source, destination, shots, words, options, Path(directory), hook, timing_words)
+    compact = runtime.active.low_priority and options.compression == "compacto"
+    selected = encoder(quality=24 if compact else 22)
+    hardware = selected[1].endswith(("_nvenc", "_amf", "_qsv"))
+    attempts = (selected, None) if hardware else (selected,)
+    for attempt in attempts:
+        video_encoder = attempt or encoder(software_only=True, quality=24 if compact else 22)
+        with TemporaryDirectory(prefix=".render-", dir=destination.parent) as directory:
+            try:
+                report = _render_clip(source, destination, shots, words, options, Path(directory), hook,
+                                      timing_words, video_encoder)
+                report["gpu_fallback"] = attempt is None
+                return report
+            except RuntimeError:
+                if not hardware or attempt is None:
+                    raise
 
 
-def _render_clip(source, destination, shots, words, options, scratch, hook, timing_words):
+def _render_clip(source, destination, shots, words, options, scratch, hook, timing_words, video_encoder):
     width, height = options.frame_size
     from audio_finish import loudness_filter, make_mix, program
 
@@ -485,12 +525,8 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
     source = media_for_seeking(source, scratch / "source.mp4")
     total, audio = probe(source)
     pieces = []
-    compact_once = runtime.active.low_priority and options.compression == "compacto"
-    video_encoder = encoder()
-    if compact_once and "-crf" in video_encoder:
-        video_encoder = [*video_encoder[:-1], "24"]
-    else:
-        compact_once = False
+    compact_once = (runtime.active.low_priority and options.compression == "compacto"
+                    and video_encoder[1] != "libopenh264")
     v9 = options.polish and options.transition == "v9"
     accents = accent_shots(shots) if options.polish else {}
     spoken = timing_words if timing_words is not None else words
@@ -642,16 +678,32 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
     partial.replace(destination)
     return {"accents": list(accents.values()), "broll": [asset.name for asset, _ in inserts.values()],
             "transition": options.transition, "dissolves": blends, "sound_cues": cues, "compression": compression,
+            "video_encoder": video_encoder[1],
             "jcuts": jcuts, "punches": punches, "run_gains_db": gains, "voice_polish": options.voice_polish,
             "music": Path(music).name if music else None}
 
 
 def process(source, folder, options, log, *, screening=None, staging_dir=None, on_review=None, recording=None):
+    from compression import PRECOMPRESSION_BYTES, prepare_source
+
+    original = source.resolve()
+    if not options.render or not options.precompress or original.stat().st_size < PRECOMPRESSION_BYTES:
+        return _process(original, folder, options, log, screening, staging_dir, on_review, recording, original)
+    folder.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix=".edicao-", dir=folder) as directory:
+        try:
+            editing = prepare_source(original, Path(directory), log)
+        except (OSError, ValueError, StopIteration, sp.SubprocessError):
+            log("Não foi possível preparar uma cópia compacta. Editando o original.")
+            editing = original
+        return _process(editing, folder, options, log, screening, staging_dir, on_review, recording, original)
+
+
+def _process(source, folder, options, log, screening, staging_dir, on_review, recording, original_source):
     from dataclasses import replace
 
     folder.mkdir(parents=True, exist_ok=True)
-    original_source = source.resolve()
-    source = media_for_seeking(original_source, folder / "midia-revisao.mp4")
+    source = media_for_seeking(source, folder / "midia-revisao.mp4")
     total, audio = probe(source)
     log(f"Analisando {source.name} ({total / 60:.1f} min)")
     if options.auto_face and not options.face:
@@ -680,7 +732,7 @@ def process(source, folder, options, log, *, screening=None, staging_dir=None, o
             offset = int(low // 2) * 2
             editorial_signals[(low, high)] = (inspect(source, high - offset, audio, options.face, start=offset),
                                               offset)
-    report = {"schema": 1, "source": str(source), "original_source": str(original_source),
+    report = {"schema": 1, "source": str(source if source.parent == folder else original_source), "original_source": str(original_source),
               "duration": total, "unit": "seconds",
               "method": method,
               "facecam": options.face, "gameplay": options.game, "clips": []}
@@ -813,7 +865,7 @@ def process(source, folder, options, log, *, screening=None, staging_dir=None, o
                 try:
                     from review import export_review
                     review_path = destination.with_suffix(".otio")
-                    export_review(source, shots, review_path, audio)
+                    export_review(source if source.parent == folder else original_source, shots, review_path, audio)
                     entry["variants"][style]["review"] = review_path.name
                 except (ImportError, RuntimeError, OSError) as error:
                     log(f"Timeline de revisão indisponível: {error}")

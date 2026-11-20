@@ -95,6 +95,8 @@ class Panel:
         self.scout_continuous = tk.BooleanVar(value=True)
         self.scout_catchup = tk.BooleanVar(value=True)
         self.compression = tk.StringVar(value="compacto")
+        self.acceleration = tk.StringVar(value="Automática")
+        self.precompress = tk.BooleanVar(value=True)
         self.replay_count = tk.IntVar(value=0)
         self.replay_period = tk.IntVar(value=0)
         self.replay_only = tk.BooleanVar(value=False)
@@ -136,6 +138,7 @@ class Panel:
             "speech_gaps", "wait_minutes", "output_dir", "look", "hook", "polish", "broll_dir", "close_focus",
             "scout_live", "scout_model", "vision_model", "scout_threshold", "scout_cleanup", "scout_review", "capture_quality",
             "scout_continuous", "scout_catchup", "compression", "trim_live", "replay_after_live", "replay_height",
+            "acceleration", "precompress",
             "replay_count", "replay_period", "replay_only", "replay_gib", "live_poll_hours", "recording_transcript",
             "voice_polish", "music_mode", "music", "music_db", "transition", "sfx", "sfx_peak")}
         source_text = ""
@@ -358,6 +361,23 @@ class Panel:
         ttk.Label(live, text="Formato").pack(side="left", padx=(12, 4))
         ttk.Combobox(live, textvariable=self.compression, values=("original", "compacto", "hevc"),
                      width=9, state="readonly").pack(side="left")
+        def enable_ai(model):
+            self.scout_model.set(model)
+            self.vision_model.set(model)
+            self.save_preferences()
+
+        def open_ai_setup():
+            from ai_setup import show
+            show(self.root, enable_ai)
+
+        ttk.Button(live, text="Configurar IA…", command=open_ai_setup).pack(side="left", padx=8)
+        processing = ttk.Frame(framing)
+        processing.grid(row=11, columnspan=5, sticky="w", pady=(4, 0))
+        ttk.Label(processing, text="Aceleração").pack(side="left")
+        ttk.Combobox(processing, textvariable=self.acceleration, values=("Automática", "CPU"),
+                     width=13, state="readonly").pack(side="left", padx=(4, 12))
+        ttk.Checkbutton(processing, text="Preparar cópia compacta de fontes grandes",
+                        variable=self.precompress).pack(side="left")
         sound = ttk.Frame(audio_tab)
         sound.grid(row=0, columnspan=5, sticky="w", pady=(4, 0))
         ttk.Checkbutton(sound, text="Melhorar clareza da voz", variable=self.voice_polish).pack(side="left")
@@ -814,7 +834,8 @@ class Panel:
                                   trim_inactive=self.trim_live.get(), vision_model=self.vision_model.get().strip(),
                                   transcribe_recordings=self.recording_transcript.get(), autopilot=self.autopilot,
                                   capture_height=capture_height, replay_after_live=self.replay_after_live.get(),
-                                  replay_height=self.replay_height.get())
+                                  replay_height=self.replay_height.get(),
+                                  acceleration="cpu" if self.acceleration.get() == "CPU" else "auto")
             if scout.replay_count or scout.replay_period or scout.replay_only:
                 from replay_library import archive_url
                 if not lives or scout.replay_count not in (2, 3) or scout.replay_period not in (0, 1, 2, 3):
@@ -837,6 +858,7 @@ class Panel:
                               hook_text=self.hook_text.get(),
                               effects_model=self.scout_model.get().strip() if self.creative_effects.get() else "",
                               smart_reframe=self.smart_reframe.get(), full_hd=bool(lives and capture_height == 1080),
+                              precompress=self.precompress.get(),
                               auto_music=self.music_mode.get() == MUSIC_MODES[0],
                               keep_manual_edges=bool(manual and not lives and sources[0][1] == "file"
                                                      and self.visual_trim == (Path(sources[0][0]), self.manual.get())))

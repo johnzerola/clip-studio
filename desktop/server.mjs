@@ -10,7 +10,7 @@ const origin = "http://127.0.0.1:45839";
 const token = process.env.CORTEX_SESSION;
 if (!token || token.length < 32) throw new Error("Inicie o Clip Studio pelo executável.");
 const python = path.join(root, ".venv/Scripts/python.exe");
-const commands = new Set(["render", "live", "modelar", "jobs", "open", "classic", "rhythm", "cancel", "open-live"]);
+const commands = new Set(["render", "live", "modelar", "jobs", "open", "classic", "rhythm", "cancel", "open-live", "ai-setup"]);
 function run(command, data) {
   return new Promise((resolve, reject) => {
     const child = execFile(python, ["-X", "utf8", path.join(root, "desktop_actions.py"), command],

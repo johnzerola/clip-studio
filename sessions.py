@@ -53,12 +53,15 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
         if on_batch:
             on_batch(batch)
         log(f"Sessão: {batch}")
-        profile = configure(scout.performance)
+        profile = configure(scout.performance, scout.acceleration)
         workers = min(workers, profile.max_renders)
         from workspace_data import editorial_weights, register_exports
         weights = editorial_weights(output)
         available = shutil.disk_usage(output).free / 1024**3
         log(f"Modo {profile.label} · até {workers} render(es) simultâneo(s) · {available:.1f} GiB livres.")
+        if options.render:
+            from engine import encoder
+            log(f"Codificador de vídeo: {encoder()[1]}.")
         live_count = sum(kind == "live" for _, kind, _ in sources)
         if profile.low_priority and live_count > 2 and not scout.replay_only:
             log("Modo Leve com mais de dois canais: a triagem pode acumular atraso.")

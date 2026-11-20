@@ -21,6 +21,8 @@ class JobRequest(BaseModel):
     mode: Literal["render", "plan"] = "render"
     style: Literal["dynamic", "split", "reaction", "gamecam", "all"] = "dynamic"
     performance: Literal["leve", "equilibrado"] = "leve"
+    acceleration: Literal["auto", "cpu"] = "auto"
+    precompress: bool = True
     seconds: int = Field(45, ge=10, le=180)
     count: int = Field(1, ge=1, le=8)
     minutes: int = Field(5, ge=0, le=720)
