@@ -52,7 +52,7 @@ O MCP serve ao banco de efeitos e à referência V9. Instale `requirements-mcp.t
 
 ## Atualizar e preservar dados
 
-A partir da v0.5.0, o painel verifica releases uma vez a cada 24 horas, enquanto estiver aberto ou ao iniciar. A consulta acontece em segundo plano. Quando encontra uma versão estável mais recente, exibe as notas e pergunta se deseja atualizar. Durante captura, render ou envio, o aviso aguarda os trabalhos terminarem.
+A partir da v0.5.1, o painel verifica releases a cada 20 minutos, enquanto estiver aberto ou ao iniciar. A consulta acontece em segundo plano. Quando encontra uma versão estável mais recente, exibe as notas e pergunta se deseja atualizar. Durante captura, render ou envio, o aviso aguarda os trabalhos terminarem.
 
 Ao aceitar, o painel salva as preferências e fecha. Uma janela de atualização baixa o ZIP e o checksum da release oficial, valida o SHA-256, extrai numa pasta irmã e prepara o ambiente Python usando o instalador. O atalho da Área de Trabalho só é direcionado para a nova versão depois de o diagnóstico passar. O app novo abre automaticamente.
 

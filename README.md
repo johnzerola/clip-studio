@@ -2,11 +2,11 @@
 
 **Transforme lives e gravações em cortes verticais para Shorts, TikTok e Reels.** Aplicativo Windows para acompanhar canais, escolher momentos, editar com legendas e revisar clipes antes de publicar.
 
-**Windows 10/11** · **Português** · **Código aberto sob MIT** · **v0.5.0**
+**Windows 10/11** · **Português** · **Código aberto sob MIT** · **v0.5.1**
 
 **[Baixar para Windows](https://github.com/johnzerola/clip-studio/releases/latest/download/Clip-Studio-Windows.zip)** · [Guia ilustrado](docs/GUIA-DO-PAINEL.md) · [Arquitetura](docs/ARQUITETURA.md) · [Contribuir](#contribuir)
 
-[Notas da versão 0.5.0](docs/RELEASE-0.5.0.md)
+[Notas da versão 0.5.1](docs/RELEASE-0.5.1.md)
 
 ![Visão geral do Clip Studio com dados de demonstração](docs/img/visao-geral.png)
 
@@ -42,7 +42,7 @@
 
 5. Abra pelo atalho ou por **Iniciar.cmd**. O [guia de instalação](docs/INSTALACAO.md) explica requisitos, instalação manual, atualização e diagnóstico.
 
-O painel consulta as releases do GitHub uma vez por dia, inclusive se continuar aberto. Quando há novidade, mostra **Atualização disponível**, explica as mudanças e oferece **Atualizar agora**. Ao aceitar, prepara uma instalação nova, confere o checksum, instala as dependências e reabre o app. O atalho só muda após o diagnóstico passar. A pasta anterior permanece disponível para recuperação. Capturas, renders e envios precisam terminar antes da atualização.
+O painel consulta as releases do GitHub a cada 20 minutos, inclusive se continuar aberto. Quando há novidade, mostra **Atualização disponível**, explica as mudanças e oferece **Atualizar agora**. Ao aceitar, prepara uma instalação nova, confere o checksum, instala as dependências e reabre o app. O atalho só muda após o diagnóstico passar. A pasta anterior permanece disponível para recuperação. Capturas, renders e envios precisam terminar antes da atualização.
 
 Quem usa a v0.4.0 precisa baixar esta primeira atualização pela página de Releases. A instalação automática estará disponível para as próximas versões a partir da v0.5.0.
 

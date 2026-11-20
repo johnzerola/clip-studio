@@ -456,12 +456,12 @@ class Panel:
         root.after(1800, self.check_for_updates)
 
     def check_for_updates(self):
-        from update_check import check_for_update
+        from update_check import CHECK_INTERVAL_SECONDS, check_for_update
         if not hasattr(self, "update_events"):
             self.update_events = queue.Queue()
             self.update_seen = set()
         check_for_update(self.update_events.put)
-        self.root.after(900000, self.check_for_updates)
+        self.root.after(CHECK_INTERVAL_SECONDS * 1000, self.check_for_updates)
         if not getattr(self, "update_poll_started", False):
             self.update_poll_started = True
             self.root.after(500, self.poll_updates)
