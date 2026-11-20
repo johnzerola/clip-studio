@@ -1,48 +1,50 @@
-"""Verifica novas versões publicadas no GitHub sem interromper o painel."""
-from __future__ import annotations
-
+"""Descoberta pública de releases, com cache diário e entrega por fila."""
 import json
+import re
 import threading
-import urllib.error
+import time
 import urllib.request
-from datetime import date
 from pathlib import Path
 
-VERSION = "0.4.1"
-OWNER = "johnzerola"
-REPOSITORY = "clip-studio"
-API_URL = f"https://api.github.com/repos/{OWNER}/{REPOSITORY}/releases/latest"
+VERSION = "0.5.0"
+REPO = "johnzerola/clip-studio"
+API_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 STATE_FILE = Path(__file__).resolve().parent / "update_check.local.json"
+_LOCK = threading.Lock()
 
 
-def _version(value: str) -> tuple[int, ...]:
-    return tuple(int(part) for part in value.strip().lstrip("vV").split("."))
+def _version(value):
+    if not re.fullmatch(r"v?\d+\.\d+\.\d+", value):
+        raise ValueError("Versão incompatível")
+    return tuple(map(int, value.lstrip("v").split(".")))
 
 
-def check_for_update(callback, *, force: bool = False) -> None:
-    """Busca a release mais recente em background e entrega (tag, URL) se nova."""
+def check_for_update(callback, *, force=False):
     def worker():
-        try:
-            previous = {}
-            if STATE_FILE.exists():
-                previous = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-            today = date.today().isoformat()
-            if not force and previous.get("checked") == today:
-                return
-
-            request = urllib.request.Request(
-                API_URL,
-                headers={"Accept": "application/vnd.github+json", "User-Agent": "Clip-Studio-Updater"},
-            )
-            with urllib.request.urlopen(request, timeout=5) as response:
-                release = json.loads(response.read().decode("utf-8"))
-            tag = str(release.get("tag_name", "")).strip()
-            url = str(release.get("html_url", "")).strip()
-            STATE_FILE.write_text(json.dumps({"checked": today}, ensure_ascii=False), encoding="utf-8")
-            if tag and url and _version(tag) > _version(VERSION):
-                callback(tag, url)
-        except (OSError, ValueError, KeyError, urllib.error.URLError):
-            # O painel permanece disponível sem rede ou quando a API está limitada.
+        if not _LOCK.acquire(blocking=False):
             return
-
-    threading.Thread(target=worker, name="clip-studio-update-check", daemon=True).start()
+        try:
+            cached = {}
+            try:
+                cached = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                pass
+            release = cached.get("release")
+            checked = cached.get("checked_at", 0)
+            if force or not isinstance(release, dict) or not isinstance(checked, (int, float)) or time.time() - checked >= 86400:
+                request = urllib.request.Request(API_URL, headers={"Accept": "application/vnd.github+json", "User-Agent": "Clip-Studio"})
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    release = json.load(response)
+                if not isinstance(release, dict):
+                    return
+                try:
+                    STATE_FILE.write_text(json.dumps({"checked_at": time.time(), "release": release}), encoding="utf-8")
+                except OSError:
+                    pass
+            if not release.get("draft") and not release.get("prerelease") and _version(str(release.get("tag_name", ""))) > _version(VERSION):
+                callback(release)
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+        finally:
+            _LOCK.release()
+    threading.Thread(target=worker, daemon=True, name="update-check").start()

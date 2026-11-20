@@ -52,12 +52,14 @@ O MCP serve ao banco de efeitos e à referência V9. Instale `requirements-mcp.t
 
 ## Atualizar e preservar dados
 
-O painel consulta a release pública uma vez por dia, em segundo plano. Se houver uma versão mais nova, oferece abrir a página no GitHub para baixar. A verificação usa a API pública, sem chave; falha de rede não bloqueia o app. Releases também podem gerar notificações do GitHub para quem acompanha o repositório.
+A partir da v0.5.0, o painel verifica releases uma vez a cada 24 horas, enquanto estiver aberto ou ao iniciar. A consulta acontece em segundo plano. Quando encontra uma versão estável mais recente, exibe as notas e pergunta se deseja atualizar. Durante captura, render ou envio, o aviso aguarda os trabalhos terminarem.
 
-Para atualizar, feche a sessão antes de mexer na instalação. Baixe a nova versão em [Releases](https://github.com/johnzerola/clip-studio/releases/latest) e extraia em outra pasta. Execute o instalador e abra a nova cópia. Selecione a pasta de saída anterior para manter acesso aos resultados e ao histórico. As preferências ficam em `preferencias.local.json` dentro de cada instalação. Se você usa `biblioteca.local`, copie essa pasta para a nova instalação. Os modelos Whisper ficam em `models`.
+Ao aceitar, o painel salva as preferências e fecha. Uma janela de atualização baixa o ZIP e o checksum da release oficial, valida o SHA-256, extrai numa pasta irmã e prepara o ambiente Python usando o instalador. O atalho da Área de Trabalho só é direcionado para a nova versão depois de o diagnóstico passar. O app novo abre automaticamente.
 
-Versões anteriores à `0.4.0` não incluem o verificador automático. Para a primeira atualização, baixe esta versão pela página de Releases; a partir dela o painel avisa sobre futuras versões.
+A versão anterior permanece intacta. Preferências, pasta de saída, histórico da fila e credencial YouTube protegida pelo Windows são preservados. Modelos, biblioteca particular e resultados permanecem na pasta antiga; não a apague. Selecione ou copie sua biblioteca local quando necessário. Dependendo do motor, a nova instalação pode precisar baixar o modelo novamente.
 
-Para desinstalar, feche o app, remova o atalho da instalação e apague a pasta instalada depois de copiar as mídias, os resultados e as preferências que quiser guardar. Resultados em outra unidade permanecem na pasta escolhida.
+Se a instalação falhar, o atalho anterior permanece disponível e a janela informa o erro e o registro da instalação. A atualização requer internet e permissão de escrita na pasta que contém o app. O Windows pode solicitar intervenção conforme suas políticas locais.
 
-Para instalação com ajuda de ChatGPT ou outra IA, abra a pasta extraída no assistente e indique [AGENTS.md](../AGENTS.md).
+Versões anteriores à v0.5.0 precisam desta primeira atualização manual: baixe o ZIP em [Releases](https://github.com/johnzerola/clip-studio/releases/latest), extraia numa pasta nova e execute Instalar.cmd. A v0.4.0 oferece abrir a página; ela não instala automaticamente.
+
+Para desinstalar, feche o app e preserve os resultados, biblioteca e preferências que quiser guardar antes de remover a pasta e o atalho.
