@@ -6,7 +6,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-VERSION = "0.7.3"
+VERSION = "0.7.4"
 CHECK_INTERVAL_SECONDS = 20 * 60
 REPO = "johnzerola/clip-studio"
 API_URL = f"https://api.github.com/repos/{REPO}/releases/latest"

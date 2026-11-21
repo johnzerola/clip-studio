@@ -49,8 +49,8 @@ if (-not $Check) {
     $reuseMarker = Join-Path $project '.venv/reused-requirements.sha256'
     if (Test-Path -LiteralPath $reuseMarker) {
         $existingHash = (Get-Content -LiteralPath $reuseMarker -Raw).Trim()
-        $newHash = (Get-FileHash -LiteralPath (Join-Path $project 'requirements.txt') -Algorithm SHA256).Hash
-        if ($newHash -ne $existingHash) { throw 'Dependências diferentes. Execute o instalador em uma nova pasta.' }
+        $newHash = & $runtime -c "import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())" (Join-Path $project 'requirements.txt')
+        if ($LASTEXITCODE -ne 0 -or $newHash -ne $existingHash) { throw 'Dependências diferentes. Execute o instalador em uma nova pasta.' }
     } else {
         & $runtime -m pip install --disable-pip-version-check -r (Join-Path $project 'requirements.txt')
         if ($LASTEXITCODE -ne 0) { throw 'Falha ao instalar dependências Python.' }
