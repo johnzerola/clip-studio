@@ -91,6 +91,8 @@ def prepare(request):
                    hook_text=request.get("hook_text") or "", effects_model=request.get("effects_model") or "",
                    smart_reframe=bool(request.get("smart_reframe", False)), speech_language=language,
                    target_shot_seconds=target_shot_seconds, full_hd=bool(capture_height and capture_height >= 1080),
+                   director_reference={key: modelar_reference[key] for key in ("preset_sha256", "analysis_id", "reference_shot_seconds", "source_hashes")
+                                       if key in modelar_reference} or None,
                    precompress=bool(request.get("precompress", True)), visual_library=library,
                    visual_background=background, background_asset=backdrop, review_visuals=mode == "preview")
     scout = ScoutSettings(model=str(request.get("model") or ""), threshold=threshold, clip_seconds=duration,

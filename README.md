@@ -4,7 +4,7 @@
 
 **Transforme lives e gravações em cortes verticais para Shorts, TikTok e Reels.** Aplicativo Windows para acompanhar canais, escolher momentos, editar com legendas e revisar clipes antes de publicar.
 
-**Windows 10/11** · **Português** · **Motor sob MIT** · **v0.7.6**
+**Windows 10/11** · **Português** · **Motor sob MIT** · **v0.7.7**
 
 **[Baixar para Windows](https://github.com/johnzerola/clip-studio/releases/latest/download/Clip-Studio-Windows.zip)** · [Guia ilustrado](docs/GUIA-DO-PAINEL.md) · [Arquitetura](docs/ARQUITETURA.md) · [Contribuir](#contribuir)
 

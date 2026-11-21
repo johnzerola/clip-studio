@@ -19,6 +19,8 @@ if (!token || token.length < 32) throw new Error("Inicie o Clip Studio pelo exec
 const python = path.join(root, ".venv/Scripts/python.exe");
 const commands = new Set(["render", "live", "modelar", "jobs", "open", "rhythm", "cancel", "open-live", "pick", "ai-status", "ai-install", "update-status", "update-install", "library", "clip-open-studio", "agenda", "schedule", "review", "youtube-account", "youtube-connect", "publish", "retention", "feedback", "visual-library", "visual-import", "visual-enable", "visual-reviews", "visual-review-queue", "storage"]);
 const longRequests = new Set(["pick", "modelar", "ai-install", "youtube-connect", "publish", "visual-import", "storage"]);
+for (const name of ["trim", "job-details"]) commands.add(name);
+longRequests.add("trim");
 const mediaCommands = new Map([["/_desktop/media", "clip-preview"], ["/_desktop/visual-media", "visual-media"], ["/_desktop/review-media", "visual-review-media"]]);
 const mediaTypes = { ".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm", ".png": "image/png",
   ".gif": "image/gif", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" };
@@ -97,7 +99,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(403).end(); return;
   }
   res.setHeader("Cache-Control", "no-store");
-  const exclusive = ["live", "modelar", "render", "pick", "update-install", "publish", "youtube-connect", "visual-review-queue"].includes(command);
+  const exclusive = ["live", "modelar", "render", "pick", "trim", "update-install", "publish", "youtube-connect", "visual-review-queue"].includes(command);
   if (exclusive && editing) { res.writeHead(409).end("Conclua a seleção aberta."); return; }
   if (exclusive) editing = true;
   try {

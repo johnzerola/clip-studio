@@ -27,7 +27,10 @@ def open_trim(parent, source, ranges, on_apply, parse_time):
     window.title("Ajustar corte")
     window.geometry("718x560")
     window.minsize(660, 515)
-    window.transient(parent)
+    if parent.winfo_viewable():
+        window.transient(parent)
+    else:
+        window.attributes("-topmost", True)
     body = ttk.Frame(window, padding=16)
     body.pack(fill="both", expand=True)
     body.columnconfigure(0, weight=1)

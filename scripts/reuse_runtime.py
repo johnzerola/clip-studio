@@ -1,4 +1,4 @@
-"""Reuse identical Python packages across side-by-side Windows installations."""
+"""Reuse identical components across side-by-side Windows installations."""
 import hashlib
 import os
 from pathlib import Path
@@ -33,6 +33,35 @@ def hardlink_tree(source, target):
             if not path.is_file() or path.is_symlink():
                 raise OSError("Arquivo inválido no ambiente de origem")
             os.link(path, destination / name)
+
+
+def share_node(root):
+    relative = Path("desktop/runtime/node.exe")
+    target = root / relative
+    if not target.is_file() or target.resolve() != target:
+        return False
+    try:
+        size = target.stat().st_size
+        with target.open("rb") as stream:
+            expected = hashlib.file_digest(stream, "sha256").digest()
+    except OSError:
+        return False
+    for sibling in versioned_siblings(root):
+        source = sibling / relative
+        try:
+            if not source.is_file() or source.resolve() != source or source.stat().st_size != size or source.samefile(target):
+                continue
+            with source.open("rb") as stream:
+                if hashlib.file_digest(stream, "sha256").digest() != expected:
+                    continue
+            with TemporaryDirectory(prefix=".node-", dir=target.parent) as directory:
+                temporary = Path(directory) / "node.exe"
+                os.link(source, temporary)
+                temporary.replace(target)
+            return True
+        except OSError:
+            continue
+    return False
 
 
 def reuse(root):
@@ -82,4 +111,7 @@ def reuse(root):
 
 
 if __name__ == "__main__":
-    sys.exit(0 if reuse(Path(sys.argv[1]).resolve()) else 1)
+    root = Path(sys.argv[1]).resolve()
+    if share_node(root):
+        print("Runtime Node identico reaproveitado.")
+    sys.exit(0 if reuse(root) else 1)

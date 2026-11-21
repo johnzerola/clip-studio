@@ -39,6 +39,29 @@ ENC = ["-pix_fmt", "yuv420p",
        "-c:a", "aac", "-ar", "48000", "-ac", "2", "-threads", "2"]
 MODEL_LOCK = threading.Lock()
 MODELS = {}
+MODEL_IDLE_SECONDS = 90
+_model_timer = None
+_model_last_use = 0.
+
+
+def _model_idle_check():
+    global _model_timer
+    with MODEL_LOCK:
+        _model_timer = None
+        if runtime.active.low_priority:
+            remaining = MODEL_IDLE_SECONDS - (time.monotonic() - _model_last_use)
+            if remaining > 0:
+                _schedule_model_release(remaining)
+            else:
+                MODELS.clear()
+
+
+def _schedule_model_release(delay):
+    global _model_timer
+    if _model_timer is None:
+        _model_timer = threading.Timer(delay, _model_idle_check)
+        _model_timer.daemon = True
+        _model_timer.start()
 
 
 @dataclass(frozen=True)
@@ -80,6 +103,7 @@ class Options:
     smart_reframe: bool = False
     speech_language: str = "auto"
     target_shot_seconds: float = 3.0
+    director_reference: dict | None = None
     full_hd: bool = False
     precompress: bool = True
     visual_library: tuple[Asset, ...] = ()
@@ -407,6 +431,7 @@ def speech_model_path(model):
 
 
 def transcribe(source, start, end, model=None, *, language="auto"):
+    global _model_last_use
     import numpy as np
     from faster_whisper import WhisperModel
 
@@ -444,16 +469,21 @@ def transcribe(source, start, end, model=None, *, language="auto"):
                         for s in segments for w in (s.words or []) if w.word.strip()]
 
         try:
-            if model not in MODELS:
-                MODELS[model] = ((threads, device), load(device))
-            return words(MODELS[model][1])
-        except RuntimeError:
-            if device != "cuda" or not runtime.cuda_transcription:
-                raise
-            runtime.cuda_transcription = False
-            MODELS.clear()
-            MODELS[model] = ((threads, "cpu"), load("cpu"))
-            return words(MODELS[model][1])
+            try:
+                if model not in MODELS:
+                    MODELS[model] = ((threads, device), load(device))
+                return words(MODELS[model][1])
+            except RuntimeError:
+                if device != "cuda" or not runtime.cuda_transcription:
+                    raise
+                runtime.cuda_transcription = False
+                MODELS.clear()
+                MODELS[model] = ((threads, "cpu"), load("cpu"))
+                return words(MODELS[model][1])
+        finally:
+            if runtime.active.low_priority and MODELS:
+                _model_last_use = time.monotonic()
+                _schedule_model_release(MODEL_IDLE_SECONDS)
 
 
 def audio_silences(source, low, high, cleanup):
@@ -835,6 +865,8 @@ def _process(source, folder, options, log, screening, staging_dir, on_review, re
               "duration": total, "unit": "seconds",
               "method": method,
               "facecam": options.face, "gameplay": options.game, "clips": []}
+    if options.director_reference:
+        report["director_reference"] = options.director_reference
     if transcript_path is not None:
         report["transcript"] = transcript_path.name
         report["transcript_readable"] = "transcricao.txt"

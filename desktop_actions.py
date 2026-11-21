@@ -97,6 +97,62 @@ def start_job(command, data):
     return result
 
 
+def edit_ranges(data):
+    from tkinter import Tk
+    from tkinter.simpledialog import askinteger
+    from painel import parse_ranges, parse_time
+    from trim_preview import open_trim, select_plan
+    from jobs_cli import ensure_media_path
+
+    ensure_media_path()
+    marks = []
+    root = Tk()
+    root.withdraw()
+    try:
+        if data.get("from_plan") is True:
+            selected = select_plan(root)
+            if not selected:
+                return {}
+            source, cuts = selected
+            index = 1 if len(cuts) == 1 else askinteger(
+                "Escolher corte", "Qual corte do plano deseja abrir?", minvalue=1, maxvalue=len(cuts), parent=root)
+            if index is None:
+                return {}
+            ranges = cuts[index - 1]
+        else:
+            source = Path(data["source"]).resolve(strict=True)
+            ranges = parse_ranges(data.get("ranges") or "")
+        if not source.is_file() or source.suffix.lower() not in {".mp4", ".mkv", ".mov", ".webm", ".avi"}:
+            raise ValueError("Selecione um único vídeo local para marcar o trecho.")
+        window = open_trim(root, source, ranges, marks.extend, parse_time)
+        root.wait_window(window)
+    finally:
+        root.destroy()
+    return {"ranges": ", ".join(f"{a:.3f}-{b:.3f}" for a, b in marks), "source": str(source.resolve())} if marks else {}
+
+
+def session_details(key):
+    result = outputs(key)
+    with connect() as db:
+        tail = [row[0] for row in db.execute(
+            "SELECT line FROM events WHERE job=? ORDER BY seq DESC LIMIT 24", (key,))]
+    plans = []
+    for filename in result["plans"][:6]:
+        path = Path(filename).resolve()
+        try:
+            if not path.is_relative_to(Path(result["session"])) or path.stat().st_size > 2_000_000:
+                continue
+            report = json.loads(path.read_text(encoding="utf-8"))
+            clips = report.get("clips", [])
+            technique = report.get("director_reference") or {}
+            plans.append({"source": Path(report.get("original_source") or filename).name,
+                          "cuts": len(clips), "rhythm": technique.get("reference_shot_seconds"),
+                          "ranges": [[part["start"], part["end"]] for cut in clips[:1] for part in cut.get("parts", [])[:6]]})
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            continue
+    return {"events": list(reversed(tail)), "plans": plans}
+
+
 def update_info(install=False):
     from update_check import VERSION, check_for_update
     from update_install import select_assets, start_update
@@ -206,6 +262,10 @@ def action(command, data):
         return start_job(command, data)
     if command == "pick":
         return pick(data)
+    if command == "trim":
+        return edit_ranges(data)
+    if command == "job-details":
+        return session_details(data["id"])
     if command in ("visual-library", "visual-media", "visual-import", "visual-enable"):
         from visual_catalog import activate, card, catalog, import_asset, item_for
         if command == "visual-library":

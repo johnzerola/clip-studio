@@ -1,6 +1,15 @@
 # Arquitetura e integrações
 
-O Python coordena captura, análise, edição e render. O painel usa Tkinter. FFmpeg e FFprobe cuidam da mídia. Os bancos SQLite e os arquivos de sessão ficam no disco escolhido pelo usuário.
+O Codex para Windows é híbrido. O launcher abre o painel React em uma janela do Edge, com Node local. Python coordena captura e edição e chama Streamlink, FFmpeg e FFprobe. Tkinter atende os seletores de arquivo e a marcação de trechos. A CLI e o MCP podem executar o motor diretamente. Os bancos SQLite e os arquivos de sessão ficam no disco escolhido pelo usuário.
+
+## O que foi reaproveitado
+
+| Origem | Como entra no Codex |
+| --- | --- |
+| Clip Studio v0.5.1 | Captura por blocos com Streamlink e FFmpeg, seleção local e edição V9. Painel, CLI e MCP apontam para a mesma fila. |
+| Clip Studio v0.5.1 | Marcação de trechos por quadro em **Marcar início e fim** e acompanhamento em **Ver registro e plano**. O plano JSON e a timeline OTIO continuam no resultado quando gerados. |
+| AI Video Director | Em **Modelar**, o perfil aprovado é conferido pelos hashes das referências. O plano registra o ritmo, o hash do preset e os hashes das fontes usados nessa edição. |
+| AI Video Director | OpenFilm, FilmCraft, EffectCraft, análise quadro a quadro e Autopilot completo continuam no pacote do Director. O Codex usa o V9 para suas exportações. |
 
 ```mermaid
 flowchart LR

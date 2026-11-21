@@ -21,9 +21,11 @@ A **Biblioteca visual** exibe prévias, fonte, licença e frases de entrada. Use
 
 Para um vídeo local, habilite **Revisar inserções antes de exportar**. As prévias de 360 × 640 ficam em **Gerados**, com opções para manter, trocar ou remover uma inserção. A exportação refaz o mesmo plano na resolução escolhida. Guarde o vídeo de origem durante a revisão.
 
+**Marcar início e fim** abre a prévia do antigo Clip Studio. Ela busca um quadro por vez e devolve o intervalo ao formulário. **Abrir plano anterior** recupera as marcas de `cortes.json` se o vídeo de origem ainda estiver disponível. **Ver registro e plano** mostra os eventos recentes e os intervalos do primeiro corte de cada plano. Em **Modelar**, `cortes.json` também vincula o ritmo aos hashes do preset e das fontes aprovadas.
+
 Em **Gerados**, aprovações, descartes e retenção informada ajudam a calibrar a nota pela rede e pelo tema. O ajuste editorial usa pelo menos três decisões do mesmo tema. A revisão exibe a justificativa da análise inicial, as contribuições da retenção e das decisões e os cortes parecidos.
 
-Em **Ajustes**, use **Ver uso do disco** para medir versões, caches e capturas monitoradas. Em um volume Windows compatível, atualizações com `requirements.txt` idêntico reaproveitam os arquivos de dependências por hard links. O instalador valida o ambiente antes de trocar os atalhos.
+Em **Ajustes**, use **Ver uso do disco** para medir versões, caches e capturas monitoradas. Em um volume Windows compatível, atualizações reaproveitam dependências Python quando `requirements.txt` coincide e o executável Node quando o SHA-256 coincide. O instalador descarta a cópia do ZIP interno após extrair e verificar os arquivos do painel. No modo Leve, o Whisper é liberado depois de 90 segundos sem transcrição e volta a carregar a partir do disco quando necessário.
 
 Escolha português, inglês, espanhol ou detecção automática para transcrever a fala. O modo Leve usa uma tarefa local por vez. A triagem de lives combina transcrição, áudio, movimento e, quando disponível, reações de espectadores distintos no chat. A nota é uma estimativa editorial de potencial. Ao atualizar, o Codex procura um modelo Whisper completo no cache compartilhado e nas instalações anteriores antes de baixar.
 
