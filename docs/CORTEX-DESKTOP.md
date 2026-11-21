@@ -2,11 +2,11 @@
 
 O aplicativo x64 reúne o painel React do Hook Spark, o motor de cortes V9 e os perfis aprovados do AI Video Director. No Windows 10 ou 11, baixe **Clip-Studio-Setup.exe** em [Releases](https://github.com/johnzerola/clip-studio/releases/latest) e escolha onde instalar. A edição usa Python 3.13 x64 e FFmpeg. A interface abre em uma janela de aplicativo do Microsoft Edge com perfil próprio. O pacote já contém o Node e o painel compilado.
 
-Desde a v0.7.0, o atalho **Codex**, `Iniciar.cmd` e `Codex.exe` abrem o painel Hook Spark. O painel, a CLI e o MCP usam a mesma fila V9.
+A partir da v0.7.1, os atalhos **Codex** e **Clip Studio**, `Iniciar.cmd`, `Codex.exe` e `Clip Studio.exe` abrem o mesmo painel Hook Spark. Se a janela estiver aberta, o atalho traz essa janela de volta. O painel, a CLI e o MCP usam a mesma fila V9.
 
 | Área | O que acontece |
 | --- | --- |
-| Início | Acompanhe e cancele os trabalhos da fila do painel, CLI e MCP. |
+| Início | Escolha vídeos ou cole um link em **Analisar com IA**. Acompanhe a fila e use os cartões de clipes aprovados para assistir, baixar ou revisar antes de postar. |
 | Gerar ou Enviar e cortar | Adicione arquivos ou links de gravações, escolha a saída e use **Montar, avaliar e exportar** ou **Gerar plano de cortes**. |
 | Ao vivo | Acompanhe canais a cada uma, duas ou três horas, capture até 1080p e procure as últimas duas ou três gravações. Links de gravações também podem ser processados diretamente. |
 | Modelar | Escolha o vídeo e a técnica aprovada. O Director confere a origem das referências. O V9 usa o ritmo do perfil no enquadramento dinâmico com facecam. |

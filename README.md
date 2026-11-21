@@ -4,13 +4,13 @@
 
 **Transforme lives e gravações em cortes verticais para Shorts, TikTok e Reels.** Aplicativo Windows para acompanhar canais, escolher momentos, editar com legendas e revisar clipes antes de publicar.
 
-**Windows 10/11** · **Português** · **Motor sob MIT** · **v0.7.0**
+**Windows 10/11** · **Português** · **Motor sob MIT** · **v0.7.1**
 
 **[Baixar para Windows](https://github.com/johnzerola/clip-studio/releases/latest/download/Clip-Studio-Windows.zip)** · [Guia ilustrado](docs/GUIA-DO-PAINEL.md) · [Arquitetura](docs/ARQUITETURA.md) · [Contribuir](#contribuir)
 
 [Notas da versão 0.5.1](docs/RELEASE-0.5.1.md)
 
-Na versão 0.7.0, o atalho **Codex** abre o Hook Spark com os recursos do V9. Veja as áreas e a migração no [guia do painel unificado](docs/CORTEX-DESKTOP.md). As imagens e instruções do painel clássico abaixo continuam úteis para quem executa o motor a partir do código-fonte.
+Os atalhos **Codex** e **Clip Studio** abrem o Hook Spark com os recursos do V9. Veja as áreas e a migração no [guia do painel unificado](docs/CORTEX-DESKTOP.md). As imagens e instruções do painel clássico abaixo continuam úteis para quem executa o motor a partir do código-fonte.
 
 [Lives, postagens e modelos locais](docs/LIVES-E-POSTAGENS.md) · [Studio, UGC e integração OpenShorts](docs/INTEGRACAO-OPENSHORTS.md)
 

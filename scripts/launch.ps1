@@ -4,7 +4,6 @@ Add-InstalledToolPaths
 $project = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $runtime = Join-Path $project '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $runtime)) { throw 'Execute Instalar.cmd primeiro.' }
-try { & (Join-Path $PSScriptRoot 'shortcut.ps1') -MigrateOnly } catch { Write-Warning $_.Exception.Message }
 if (Test-Path -LiteralPath (Join-Path $project 'desktop/runtime.sha256')) {
     & (Join-Path $project 'desktop/prepare.ps1') -Check
     $pythonw = Join-Path $project '.venv/Scripts/pythonw.exe'

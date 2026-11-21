@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA = Path(os.environ["LOCALAPPDATA"]) / "Codex Video"
 ORIGIN = "http://127.0.0.1:45839"
 NO_WINDOW = subprocess.CREATE_NO_WINDOW
+PANEL_PID = DATA / "panel.pid"
 
 
 def edge_path():
@@ -40,8 +41,9 @@ def start():
         try:
             msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
         except OSError:
-            subprocess.Popen([*edge, "--app=" + ORIGIN], creationflags=NO_WINDOW)
+            focus_panel()
             return
+        PANEL_PID.unlink(missing_ok=True)
         with (DATA / "desktop.log").open("wb") as log:
             serve(edge, log)
 
@@ -68,15 +70,17 @@ def serve(edge, log):
         else:
             raise RuntimeError("O painel local não iniciou. Registro em " + str(log.name))
         browser = subprocess.Popen([*edge, "--app=" + ORIGIN + "/_desktop/session?code=" + code], creationflags=NO_WINDOW)
+        PANEL_PID.write_text(str(browser.pid), encoding="ascii")
         while browser.poll() is None and server.poll() is None:
             if restart.is_file():
                 break
             time.sleep(0.5)
         if browser.poll() is None and restart.is_file():
-            close_windows(browser.pid)
+            visit_windows(browser.pid, lambda window: ctypes.windll.user32.PostMessageW(window, 0x0010, 0, 0))
         if server.poll() is not None:
             raise RuntimeError("O serviço do painel foi encerrado. Registro em " + str(log.name))
     finally:
+        PANEL_PID.unlink(missing_ok=True)
         server.stdin.close()
         try:
             server.wait(timeout=5)
@@ -84,19 +88,40 @@ def serve(edge, log):
             server.terminate()
 
 
-def close_windows(pid):
+def focus_panel():
+    user32 = ctypes.windll.user32
+
+    def focus(window):
+        user32.ShowWindowAsync(window, 9)  # SW_RESTORE
+        user32.SetForegroundWindow(window)
+
+    for _ in range(30):
+        try:
+            pid = int(PANEL_PID.read_text(encoding="ascii"))
+            if visit_windows(pid, focus):
+                return
+        except (OSError, ValueError):
+            pass
+        time.sleep(0.15)
+
+
+def visit_windows(pid, action):
     user32 = ctypes.windll.user32
     callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    found = False
 
     @callback
-    def close(window, _):
+    def visit(window, _):
+        nonlocal found
         owner = wintypes.DWORD()
         user32.GetWindowThreadProcessId(window, ctypes.byref(owner))
         if owner.value == pid and user32.IsWindowVisible(window):
-            user32.PostMessageW(window, 0x0010, 0, 0)
+            action(window)
+            found = True
         return True
 
-    user32.EnumWindows(close, 0)
+    user32.EnumWindows(visit, 0)
+    return found
 
 
 if __name__ == "__main__":
