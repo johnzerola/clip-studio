@@ -7,6 +7,7 @@ import time
 import unicodedata
 import urllib.request
 import xml.etree.ElementTree as ET
+from contextlib import closing
 from functools import lru_cache
 from pathlib import Path
 
@@ -135,7 +136,7 @@ def enqueue(folder, candidate, media, verdict, transcript, hook, model):
             key = hashlib.file_digest(stream, "sha256").hexdigest()
     else:
         key = "rejected:" + str(candidate.resolve())
-    with db_open(folder) as db:
+    with closing(db_open(folder)) as db, db:
         previous = db.execute("""SELECT c.path, s.clip AS signed FROM clips c
                                 LEFT JOIN clip_signatures s ON s.clip=c.id WHERE c.id=?""", (key,)).fetchone()
         if media and previous and (not previous["path"] or not Path(previous["path"]).is_file()):
@@ -152,7 +153,7 @@ def enqueue(folder, candidate, media, verdict, transcript, hook, model):
         original = Path(verdict["source"])
         try:
             stat = original.stat()
-            identity = f"{original.resolve().casefold()}|{stat.st_size}|{stat.st_mtime_ns}"
+            identity = f"{str(original.resolve()).casefold()}|{stat.st_size}|{stat.st_mtime_ns}"
             source = hashlib.sha256(identity.encode()).hexdigest()
         except OSError:
             pass
@@ -163,7 +164,7 @@ def enqueue(folder, candidate, media, verdict, transcript, hook, model):
     common = [word for word in dict.fromkeys(tokens(hook + " " + transcript)) if len(word) >= 4 and word not in STOPWORDS]
     tags = list(dict.fromkeys([*(match["tag"] for match in trends),
                                *(hashtag(t) for t in ("CortesDaLive", *common[:4]))]))[:6]
-    with db_open(folder) as db:
+    with closing(db_open(folder)) as db, db:
         db.execute("""INSERT OR IGNORE INTO clips (id,path,score,result,reason,title,description,tags,trends)
                       VALUES (?,?,?,?,?,?,?,?,?)""", (key, str(media.resolve()) if media else None, verdict["score"],
                    verdict["status"], verdict["reason"], title[:95], description[:450], " ".join(tags),
@@ -180,7 +181,7 @@ def enqueue(folder, candidate, media, verdict, transcript, hook, model):
 
 
 def ranked(folder, limit=250, *, platform=None):
-    with db_open(folder) as db:
+    with closing(db_open(folder)) as db, db:
         candidates = db.execute("""SELECT c.*, s.duplicate_of, parent.title AS similar_title, parent.path AS similar_path
                                 FROM clips c LEFT JOIN clip_signatures s ON c.id=s.clip
                                 LEFT JOIN clips parent ON s.duplicate_of=parent.id
@@ -204,7 +205,7 @@ def index_previous(folder, notify, limit=30, stop=None):
     """Index old queue entries on request, without running speech recognition."""
     from engine import probe
 
-    with db_open(folder) as db:
+    with closing(db_open(folder)) as db, db:
         rows = db.execute("""SELECT c.id, c.path FROM clips c LEFT JOIN clip_signatures s ON s.clip=c.id
                           WHERE s.clip IS NULL AND c.result='ready' AND c.path IS NOT NULL
                           ORDER BY c.updated ASC""").fetchall()
@@ -218,7 +219,7 @@ def index_previous(folder, notify, limit=30, stop=None):
             visual = media_signature(path, duration)
         except (OSError, ValueError, RuntimeError):
             continue
-        with db_open(folder) as db:
+        with closing(db_open(folder)) as db, db:
             db.execute("BEGIN IMMEDIATE")
             register_similarity(db, key, [], duration, visual)
         done += 1
@@ -229,12 +230,12 @@ def index_previous(folder, notify, limit=30, stop=None):
 def retention(folder, clip, platform, value=None, views=None):
     if platform not in STUDIOS:
         raise ValueError("Escolha uma plataforma.")
-    with db_open(folder) as db:
+    with closing(db_open(folder)) as db, db:
         return retention_values(db, clip, platform, value, views)
 
 
 def calibration_count(folder, platform):
-    with db_open(folder) as db:
+    with closing(db_open(folder)) as db, db:
         return retention_adjustments(db, platform)[1]
 
 
@@ -242,7 +243,7 @@ def disposition(folder, clip, platform, state=None, planned=None, *, account="")
     account = account.strip().casefold()[:100]
     if platform not in STUDIOS or (state is not None and state not in STATES):
         raise ValueError("Destino ou estado desconhecido.")
-    with db_open(folder) as db:
+    with closing(db_open(folder)) as db, db:
         if account:
             if state is not None:
                 db.execute("""INSERT INTO destination_accounts VALUES (?,?,?,?,?)

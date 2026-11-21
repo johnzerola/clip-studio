@@ -53,6 +53,20 @@ def prepare(request):
     poll_hours = int(request.get("live_poll_hours", 1))
     if poll_hours not in (0, 1, 2, 3):
         raise ValueError("Escolha uma frequência de 0, 1, 2 ou 3 horas.")
+    replay_count = int(request.get("replay_count", 0))
+    replay_period = int(request.get("replay_period", 0))
+    replay_gib = int(request.get("replay_gib", 12))
+    replay_only = bool(request.get("replay_only", False))
+    if replay_count not in (0, 2, 3) or replay_period not in (0, 1, 2, 3) or not 1 <= replay_gib <= 100:
+        raise ValueError("Escolha 2 ou 3 replays, frequência de 1 a 3 horas e limite de 1 a 100 GiB.")
+    if (replay_only or replay_period) and not replay_count:
+        raise ValueError("Selecione quantas gravações procurar.")
+    if replay_count:
+        from replay_library import archive_url
+        if any(kind != "live" for _, kind, _ in sources):
+            raise ValueError("Para buscar replays, informe apenas links de canais.")
+        for url, _, _ in sources:
+            archive_url(url)
     if style not in STYLES or profile not in PROFILES or mode not in ("plan", "render"):
         raise ValueError("Modo, estilo ou perfil inválido.")
     if not (10 <= duration <= 180 and 1 <= count <= 8 and 0 <= minutes <= 720 and 20 <= threshold <= 95):
@@ -76,6 +90,7 @@ def prepare(request):
     scout = ScoutSettings(model=str(request.get("model") or ""), threshold=threshold, clip_seconds=duration,
                           review_final=bool(request.get("review", False)), continuous=minutes == 0,
                           catchup=bool(request.get("catchup", False)), performance=profile, live_poll_hours=poll_hours,
+                          replay_count=replay_count, replay_period=replay_period, replay_only=replay_only, replay_gib=replay_gib,
                           trim_inactive=bool(request.get("trim_inactive", True)),
                           transcribe_recordings=bool(request.get("transcribe_recordings", False)),
                           vision_model=str(request.get("vision_model") or ""), speech_language=language,

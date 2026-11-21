@@ -14,7 +14,7 @@ Use Windows 10 ou 11 x64, Python 3.13 x64 com Tkinter, FFmpeg e FFprobe. O FFmpe
 2. Use **Extrair tudo**. Abra a pasta interna que contém `Instalar.cmd`. Mantenha `scripts`, `docs` e `biblioteca` junto ao código.
 3. Execute **Instalar.cmd**. Se faltar Python ou FFmpeg, rode `Instalar.cmd --automatico` no Prompt de Comando, naquela pasta. A opção automática usa WinGet para instalar os componentes ausentes.
 4. Rode `Instalar.cmd --verificar`. A saída deve identificar o Python, as bibliotecas de vídeo, H.264 e o suporte a ASS.
-5. Abra o atalho **Clip Studio**, ou `Iniciar.cmd`. Se já houver um atalho apontando para outra instalação, o instalador cria um nome com a pasta da nova cópia.
+5. Abra o atalho **Codex**, ou `Iniciar.cmd`. No pacote da release, o painel Hook Spark usa o Microsoft Edge em uma janela de aplicativo. O checkout do código-fonte usa o painel clássico.
 6. Faça um corte com um MP4 local curto seguindo o [guia do painel](GUIA-DO-PAINEL.md). Verifique o vídeo e o áudio na pasta **Clipes prontos**. Esse teste pode baixar o modelo Whisper na primeira transcrição.
 
 Com os pré-requisitos instalados, o instalador cria `.venv` e instala `requirements.txt` localmente. O Windows pode marcar scripts baixados. Confirme a origem e, se confiar no ZIP, use **Propriedades → Desbloquear** antes de extrair, caso a opção apareça. O instalador usa `RemoteSigned` para o processo.
@@ -54,7 +54,7 @@ O MCP serve ao banco de efeitos e à referência V9. Instale `requirements-mcp.t
 
 A partir da v0.5.1, o painel verifica releases a cada 20 minutos, enquanto estiver aberto ou ao iniciar. A consulta acontece em segundo plano. Quando encontra uma versão estável mais recente, exibe as notas e pergunta se deseja atualizar. Durante captura, render ou envio, o aviso aguarda os trabalhos terminarem.
 
-Ao aceitar, o painel salva as preferências e fecha. Uma janela de atualização baixa o ZIP e o checksum da release oficial, valida o SHA-256, extrai numa pasta irmã e prepara o ambiente Python usando o instalador. O atalho da Área de Trabalho só é direcionado para a nova versão depois de o diagnóstico passar. O app novo abre automaticamente.
+Ao aceitar, uma janela de atualização baixa o ZIP e o checksum da release oficial, valida o SHA-256, extrai numa pasta irmã e prepara o ambiente Python. O atalho da Área de Trabalho passa a apontar para a nova versão depois do diagnóstico. O app novo abre automaticamente.
 
 A versão anterior permanece intacta. Preferências, pasta de saída, histórico da fila e credencial YouTube protegida pelo Windows são preservados. Modelos, biblioteca particular e resultados permanecem na pasta antiga; não a apague. Selecione ou copie sua biblioteca local quando necessário. Dependendo do motor, a nova instalação pode precisar baixar o modelo novamente.
 

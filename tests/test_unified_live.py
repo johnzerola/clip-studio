@@ -5,10 +5,23 @@ from unittest.mock import patch
 
 from engine import Options, layout_graph, layouts, render_clip
 from live_scout import TwitchPulse
+from posting_queue import enqueue, ranked
 from viral_rank import chat_bonus, has_chat_reaction, rank_chat
 
 
 class UnifiedLiveTest(unittest.TestCase):
+    def test_reviewed_local_render_is_added_to_posting_queue(self):
+        with (TemporaryDirectory() as directory,
+              patch("posting_queue.topic_matches", return_value=[]),
+              patch("posting_queue.media_signature", return_value=[])):
+            folder = Path(directory)
+            original, clip = folder / "original.mp4", folder / "clip_01.mp4"
+            original.write_bytes(b"original")
+            clip.write_bytes(b"export")
+            verdict = {"source": str(original), "score": 78, "status": "ready", "reason": "Gancho claro"}
+            key = enqueue(folder, clip, clip, verdict, "Transcrição do trecho", "Destaque", "")
+            self.assertEqual(ranked(folder)[0]["id"], key)
+
     def test_failed_gpu_render_retries_with_cpu(self):
         options = Options("dynamic", "", "", "direito", False, False, 10, 1, True)
         gpu = ["-c:v", "h264_nvenc"]

@@ -141,6 +141,20 @@ def install(request, notify):
     # Point the shortcut at the new installation only after its runtime check.
     subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "RemoteSigned", "-File",
                     str(destination / "scripts/shortcut.ps1")], creationflags=flags, check=True)
+    if (root / "desktop/launch.pyw").is_file() and (root / "desktop/runtime.sha256").is_file():
+        import socket
+        restart = root / "work/desktop-restart.local"
+        restart.parent.mkdir(exist_ok=True)
+        restart.touch()
+        for _ in range(40):
+            try:
+                with socket.create_connection(("127.0.0.1", 45839), timeout=0.25):
+                    pass
+            except OSError:
+                # Let the previous launcher release the file lock and its browser profile.
+                time.sleep(1.5)
+                break
+            time.sleep(0.25)
     notify("Atualização concluída. Abrindo o Codex…")
     os.startfile(destination / "Iniciar.cmd")
     return destination

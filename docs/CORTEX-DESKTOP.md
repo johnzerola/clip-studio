@@ -1,16 +1,17 @@
 # Codex de edição de vídeo para Windows
 
-O aplicativo x64 combina o painel React do Hook Spark, o motor de cortes V9 e os perfis aprovados do AI Video Director. No Windows 10 ou 11, baixe **Clip-Studio-Setup.exe** em [Releases](https://github.com/johnzerola/clip-studio/releases/latest). Ao abrir, escolha onde instalar. A preparação usa Python 3.13 x64, FFmpeg e o Microsoft Edge WebView2 Evergreen Runtime. O painel acompanha o pacote com uma cópia do Node. O primeiro preparo das dependências precisa de internet.
+O aplicativo x64 reúne o painel React do Hook Spark, o motor de cortes V9 e os perfis aprovados do AI Video Director. No Windows 10 ou 11, baixe **Clip-Studio-Setup.exe** em [Releases](https://github.com/johnzerola/clip-studio/releases/latest) e escolha onde instalar. A edição usa Python 3.13 x64 e FFmpeg. A interface abre em uma janela de aplicativo do Microsoft Edge com perfil próprio. O pacote já contém o Node e o painel compilado.
 
-O atalho **Codex** abre o painel de edição diretamente. A versão aparece no topo. Para usar a interface web da mesma instalação, execute `Iniciar.cmd --web`. As duas interfaces compartilham a fila e o motor V9.
+Desde a v0.7.0, o atalho **Codex**, `Iniciar.cmd` e `Codex.exe` abrem o painel Hook Spark. O painel, a CLI e o MCP usam a mesma fila V9.
 
 | Área | O que acontece |
 | --- | --- |
-| Início, Gerar ou Enviar e cortar | **Escolher vídeo e montar em 9:16** coloca o arquivo na fila Python. Selecione a pasta de destino. O motor V9 cuida dos cortes, fala, trilha e acabamento. |
-| Ao vivo | Escolha até 480p, HD (720p) ou Full HD (1080p). **Capturar e editar** usa os provedores do Clip Studio em segundo plano. O motor escolhe uma variante disponível até o limite selecionado. Em Full HD, os cortes saem em 1080 × 1920. Use **Abrir no navegador** para acompanhar a transmissão. |
-| Modelar | **Aplicar perfil aprovado a um vídeo** verifica os hashes das referências do Director. O ritmo aprovado orienta o enquadramento dinâmico do V9 quando há facecam. A montagem de cenas do Modelar pode usar o ritmo mediano dos perfis aprovados. |
-| Editor e galeria | As ferramentas de edição manual, prévia e exportação visual continuam no painel Hook Spark. Os resultados V9 ficam na pasta escolhida e abrem por **Assistir** na lista de trabalhos recentes. |
-| Controles avançados | Acesso ao painel clássico para configurações detalhadas, agenda, publicação e trabalhos CLI/MCP. |
+| Início | Acompanhe e cancele os trabalhos da fila do painel, CLI e MCP. |
+| Gerar ou Enviar e cortar | Adicione arquivos ou links de gravações, escolha a saída e use **Montar, avaliar e exportar** ou **Gerar plano de cortes**. |
+| Ao vivo | Acompanhe canais a cada uma, duas ou três horas, capture até 1080p e procure as últimas duas ou três gravações. Links de gravações também podem ser processados diretamente. |
+| Modelar | Escolha o vídeo e a técnica aprovada. O Director confere a origem das referências. O V9 usa o ritmo do perfil no enquadramento dinâmico com facecam. |
+| Editor e gerados | O Editor mantém as ferramentas de edição manual do Hook Spark. Em **Gerados**, veja a prévia e a nota dos MP4 aprovados pelo V9 e salve rascunhos na agenda local. Confirme o envio no Studio da rede. |
+| Integrações | Confira e instale o Ollama opcional para a revisão dos cortes. |
 
 Escolha português, inglês, espanhol ou detecção automática para transcrever a fala. O modo Leve usa uma tarefa local por vez. A triagem de lives combina transcrição, áudio, movimento e, quando disponível, reações de espectadores distintos no chat. A nota é uma estimativa editorial de potencial.
 
@@ -34,7 +35,7 @@ Enquanto a janela está aberta, o aplicativo consulta o canal público a cada 20
 
 ### Dados e serviços
 
-O painel usa uma origem estável em loopback e um perfil WebView2 próprio por usuário Windows. Não copie tokens para o aplicativo. As funções Lovable que dependem de autenticação, gateway ou conectores continuam sujeitas à configuração desses serviços. A montagem V9 e os perfis do Director funcionam no computador. Projetos do navegador, histórico do motor local e trabalhos da fila têm armazenamentos próprios.
+O painel usa uma origem estável em loopback e um perfil Edge próprio por usuário Windows. O perfil permanece entre atualizações da v0.7.0 em diante. A migração reaproveita a pasta de saída, fila V9 e preferências locais. Projetos do Editor guardados em um perfil de navegador anterior podem ser transferidos pela exportação e importação do Editor. As funções Lovable que dependem de autenticação, gateway ou conectores continuam sujeitas à configuração desses serviços.
 
 A distribuição Windows contém o painel compilado. O código desta integração está em `desktop/` e `desktop_actions.py`. O código-fonte do painel e a receita de empacotamento permanecem no repositório de origem do Hook Spark. Ao desenvolver somente com o checkout público, `Iniciar.cmd` abre o painel clássico. Para abrir a interface unificada, use o pacote da release.
 
