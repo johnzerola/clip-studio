@@ -18,6 +18,8 @@ def versioned_siblings(root):
 
 
 def hardlink_tree(source, target):
+    if source.is_symlink() or source.is_junction():
+        raise OSError("Vínculo encontrado no ambiente de origem")
     for directory, folders, files in source.walk():
         folders[:] = [name for name in folders if name != "__pycache__"]
         for name in folders:
@@ -59,8 +61,13 @@ def reuse(root):
                 builder = venv.EnvBuilder(with_pip=False)
                 builder.create(staging)
                 hardlink_tree(package_source, staging / relative_packages)
+                share = parent / "share"
+                if share.is_dir():
+                    hardlink_tree(share, staging / "share")
                 staged_python = staging / "Scripts/python.exe"
-                result = subprocess.run([staged_python, "-m", "pip", "check"], capture_output=True, timeout=30)
+                smoke = ("import cv2, faster_whisper, ffpyplayer.player, opentimelineio, streamlink, yt_dlp; "
+                         "from pip._internal.cli.main import main; raise SystemExit(main(['check']))")
+                result = subprocess.run([staged_python, "-c", smoke], capture_output=True, timeout=45)
                 if result.returncode:
                     continue
                 (staging / "reused-requirements.sha256").write_text(fingerprint, encoding="ascii")
