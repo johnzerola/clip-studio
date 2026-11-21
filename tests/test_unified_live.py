@@ -14,6 +14,16 @@ from viral_rank import chat_bonus, has_chat_reaction, rank_chat
 
 
 class UnifiedLiveTest(unittest.TestCase):
+    def test_light_profile_reserves_acceleration_for_encoding_and_limits_filters(self):
+        import runtime_profile as runtime
+
+        with patch("runtime_profile.active", runtime.PROFILES["leve"]), patch("runtime_profile.acceleration", "auto"):
+            self.assertFalse(runtime.speech_on_gpu())
+            args = runtime.multimedia_args(["ffmpeg", "-i", "in.mp4", "-filter_threads", "8", "out.mp4"])
+            self.assertEqual(args[args.index("-filter_threads") + 1], "1")
+            self.assertEqual(args[args.index("-filter_complex_threads") + 1], "1")
+            self.assertLess(args.index("-threads"), args.index("-i"))
+
     def test_light_capture_accepts_the_reported_disk_reserve(self):
         from runtime_profile import PROFILES
         from engine import capture_space, CAPTURE_RESERVE

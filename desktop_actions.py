@@ -75,7 +75,7 @@ def start_job(command, data):
         request["director_project"] = str(Path(data["project"]).resolve())
     if command == "live":
         request.update(review=True, replay_after_live=bool(data.get("replay_after_live", True)))
-    if request.get("review"):
+    if request.get("review") and data.get("ollama_review", request.get("performance", "leve") != "leve") is True:
         models = installed_models() or set()
         model = next((item for item in MODELS if item in models), "")
         request.update(model=model, vision_model=model)

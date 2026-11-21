@@ -105,9 +105,13 @@ def make_mix(ff, run, scratch, duration, voice, music, music_db, cues):
 
 
 def loudness_filter(ff, scratch):
-    probe = subprocess.run([ff[0], "-hide_banner", "-nostats", "-i", "mix.wav", "-af",
-                            TARGET + ":print_format=json", "-f", "null", "-"],
-                           cwd=scratch, capture_output=True, text=True, check=True)
+    import runtime_profile as runtime
+
+    args = [ff[0], "-hide_banner", "-nostats", "-i", "mix.wav", "-af",
+            TARGET + ":print_format=json", "-f", "null", "-"]
+    with runtime.media_slot():
+        probe = subprocess.run(runtime.multimedia_args(args), cwd=scratch, capture_output=True, text=True,
+                               check=True, **runtime.child_options())
     block = re.search(r'\{\s*"input_i".*?\}', probe.stderr, re.S)
     if not block:
         return TARGET

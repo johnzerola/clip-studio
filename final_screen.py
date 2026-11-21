@@ -1,6 +1,7 @@
 """Evaluate rendered media before it enters the folder of publishable clips."""
 import base64
 import json
+import os
 import re
 import subprocess
 import statistics
@@ -10,6 +11,8 @@ import runtime_profile as runtime
 
 
 def evaluate(path, ff, run, expected, words, model, threshold, prior):
+    from engine import SIGNAL_FILTER, inspect
+
     vision_model = str(prior.get("vision_model", ""))
     info = json.loads(run(["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)]))
     video = next((stream for stream in info["streams"] if stream["codec_type"] == "video"), {})
@@ -18,18 +21,22 @@ def evaluate(path, ff, run, expected, words, model, threshold, prior):
     technical = width > 0 and height > 0 and width * 16 == height * 9 and abs(duration - expected) <= .15
     reason = "formato_ou_duracao"
     if technical:
+        graph = ("[0:v:0]split[qc][sampling];"
+                 "[qc]scale=180:320,blackdetect=d=1.2:pix_th=0.03:pic_th=0.99,freezedetect=n=-60dB:d=2.5[checked];"
+                 f"[sampling]{SIGNAL_FILTER}[frames]")
         flags = [ff[0], "-hide_banner", "-nostdin", "-nostats", "-xerror",
-                 "-threads", "2", "-filter_threads", "2", "-i", str(path), "-map", "0:v:0", "-map", "0:a?",
-                 "-vf", "scale=180:320,blackdetect=d=1.2:pix_th=0.03:pic_th=0.99,freezedetect=n=-60dB:d=2.5",
-                 "-f", "null", "-"]
+                 "-threads", "2", "-i", str(path), "-filter_complex_threads", "2", "-filter_complex", graph,
+                 "-map", "[checked]", "-map", "0:a?", "-f", "null", os.devnull,
+                 "-map", "[frames]", "-t", str(duration), "-c:v", "rawvideo", "-threads", "1", "-f", "rawvideo", "pipe:1"]
         try:
-            playback = subprocess.run(runtime.multimedia_args(flags), capture_output=True, encoding="utf-8",
-                                      errors="replace", timeout=180, **runtime.child_options())
+            with runtime.media_slot():
+                playback = subprocess.run(runtime.multimedia_args(flags), capture_output=True, timeout=180,
+                                          **runtime.child_options())
             if playback.returncode:
                 reason = "erro_de_decodificacao"
-            elif "black_start:" in playback.stderr:
+            elif b"black_start:" in playback.stderr:
                 reason = "trecho_preto"
-            elif "freeze_start:" in playback.stderr:
+            elif b"freeze_start:" in playback.stderr:
                 reason = "imagem_congelada"
             else:
                 reason = ""
@@ -52,8 +59,7 @@ def evaluate(path, ff, run, expected, words, model, threshold, prior):
     pace = len(tokens) / duration
     speech_seconds = sum(max(0., min(1., end - start)) for start, end, _ in words)
     variety = len(set(tokens)) / max(1, len(tokens))
-    from engine import inspect
-    observations = inspect(path, duration, has_audio)
+    observations = inspect(path, duration, has_audio, video_frames=playback.stdout)
     movements = [row[1] for row in observations]
     audio_peaks = [row[0] for row in observations]
     final_motion = max(movements, default=0)

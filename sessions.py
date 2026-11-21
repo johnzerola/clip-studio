@@ -59,9 +59,8 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
         weights = editorial_weights(output)
         available = shutil.disk_usage(output).free / 1024**3
         log(f"Modo {profile.label} · até {workers} render(es) simultâneo(s) · {available:.1f} GiB livres.")
-        if options.render:
-            from engine import encoder
-            log(f"Codificador de vídeo: {encoder()[1]}.")
+        if profile.low_priority:
+            log("Modo Leve: transcrição na CPU, uma operação de análise ou edição por vez.")
         live_count = sum(kind == "live" for _, kind, _ in sources)
         if profile.low_priority and live_count > 2 and not scout.replay_only:
             log("Modo Leve com mais de dois canais: a triagem pode acumular atraso.")
@@ -190,6 +189,7 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                             log(f"Trecho {index} recebido em {size[0]} × {size[1]}.")
                             local_duration = min(high - low, probe(path)[0])
                             clip_options = replace(settings, count=1, manual=((0., local_duration),),
+                                                   precompress=settings.precompress and not profile.low_priority,
                                                    full_hd=max(size) >= 1920, save_review=False, trim_inactive=True)
                             prior = {"vision_model": scout.vision_model, "origin_url": url,
                                      "origin_offset": low, "speech_language": settings.speech_language}
@@ -238,6 +238,8 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
 
             def schedule_live(path, block, selected=None, *, capture_dir, result, settings, live_url):
                 screening = None
+                if profile.low_priority:
+                    settings = replace(settings, precompress=False)
                 if selected:
                     end = min(selected[1], probe(path)[0])
                     settings = replace(settings, manual=((min(selected[0], max(0., end - 1)), end),),

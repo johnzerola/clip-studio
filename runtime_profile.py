@@ -1,8 +1,10 @@
 """Resource profiles for one local Clip Studio process."""
 from dataclasses import dataclass
+from contextlib import nullcontext
 from pathlib import Path
 import os
 import subprocess
+from threading import RLock
 from functools import lru_cache
 import shutil
 
@@ -25,6 +27,7 @@ PROFILES = {
 active = PROFILES["equilibrado"]
 acceleration = "auto"
 cuda_transcription = True
+_media_lock = RLock()
 
 GPU_ENCODERS = {
     "nvenc": ["-preset", "p4", "-rc", "vbr", "-cq", "{quality}", "-b:v", "0"],
@@ -85,7 +88,19 @@ def multimedia_args(args):
     for index, arg in enumerate(adjusted[:-1]):
         if arg in ("-threads", "-threads:v", "-filter_threads", "-filter_complex_threads"):
             adjusted[index + 1] = "1"
+    if "-i" in adjusted:
+        limits = [value for flag in ("-threads", "-filter_threads", "-filter_complex_threads")
+                  if flag not in adjusted for value in (flag, "1")]
+        adjusted[1:1] = limits
     return adjusted
+
+
+def media_slot():
+    return _media_lock if active.low_priority else nullcontext()
+
+
+def speech_on_gpu():
+    return acceleration == "auto" and cuda_transcription and not active.low_priority
 
 
 def ollama_resources():

@@ -128,13 +128,17 @@ def start(key, action, stop, log):
             stop.set()
 
     def heartbeat():
+        next_write = time.monotonic() + 10
         while not done.wait(1):
             try:
                 with connect() as db:
                     row = db.execute("SELECT cancel FROM jobs WHERE id=?", (key,)).fetchone()
                     if row and row["cancel"]:
                         stop.set()
-                    db.execute("UPDATE jobs SET updated=? WHERE id=? AND state='running'", (time.time(), key))
+                    now = time.monotonic()
+                    if now >= next_write:
+                        db.execute("UPDATE jobs SET updated=? WHERE id=? AND state='running'", (time.time(), key))
+                        next_write = now + 10
             except sqlite3.Error:
                 continue
 
@@ -199,6 +203,8 @@ def submit(request, origin):
     key = reserve(origin, values, output, request)
     try:
         flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        if os.name == "nt" and request.get("performance", "leve") == "leve":
+            flags |= subprocess.BELOW_NORMAL_PRIORITY_CLASS
         subprocess.Popen([sys.executable, "-X", "utf8", str(ROOT / "jobs_cli.py"), "_run", key],
                          cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, creationflags=flags, start_new_session=os.name != "nt")

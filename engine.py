@@ -25,6 +25,8 @@ from compression import compress
 import runtime_profile as runtime
 
 WIDTH, HEIGHT = 720, 1280
+SIGNAL_SIZE = (64, 36)
+SIGNAL_FILTER = f"fps=1/2,scale={SIGNAL_SIZE[0]}:{SIGNAL_SIZE[1]},format=gray"
 CAPTURE_HEIGHTS = (480, 720, 1080, 1440, 2160)
 REPLAY_HEIGHTS = (1080, 1440, 2160)
 LIVE_VARIANTS = "2160p60,2160p,1440p60,1440p,1080p60,1080p,936p60,936p,900p60,900p,864p60,864p,720p60,720p,540p,480p60,480p,360p,240p,160p".split(",")
@@ -109,7 +111,8 @@ class Options:
 
 
 def command(args, **kwargs):
-    result = sp.run(runtime.multimedia_args(args), capture_output=True, **runtime.child_options(), **kwargs)
+    with runtime.media_slot():
+        result = sp.run(runtime.multimedia_args(args), capture_output=True, **runtime.child_options(), **kwargs)
     if result.returncode:
         message = result.stderr.decode("utf-8", "replace").strip()
         raise RuntimeError(message[:1000] or str(args[0]))
@@ -162,7 +165,7 @@ def detect_facecam(source, duration):
     return estimate(frames, width, height)
 
 
-def inspect(source, duration, audio, face="", *, normalized=True, start=0., video=True):
+def inspect(source, duration, audio, face="", *, normalized=True, start=0., video=True, video_frames=None):
     """Two-second samples. No rendering or speech model needed for this pass."""
     window = (["-ss", str(start), "-i", str(source), "-t", str(duration)]
               if start else ["-i", str(source), "-t", str(duration)])
@@ -170,11 +173,13 @@ def inspect(source, duration, audio, face="", *, normalized=True, start=0., vide
     if audio:
         pcm.frombytes(command(FF + ["-threads", "2", *window, "-vn", "-ac", "1",
                                     "-ar", "800", "-f", "s16le", "pipe:1"]))
-    width, height = 64, 36
+    width, height = SIGNAL_SIZE
     size = width * height
-    frames = command(FF + ["-threads", "2", "-filter_threads", "1", *window,
-                          "-an", "-vf", f"fps=1/2,scale={width}:{height},format=gray",
-                          "-c:v", "rawvideo", "-threads", "1", "-f", "rawvideo", "pipe:1"]) if video else b""
+    frames = video_frames
+    if frames is None:
+        frames = command(FF + ["-threads", "2", "-filter_threads", "1", *window,
+                              "-an", "-vf", SIGNAL_FILTER,
+                              "-c:v", "rawvideo", "-threads", "1", "-f", "rawvideo", "pipe:1"]) if video else b""
     face_pixels = set()
     if face:
         x, y, w, h = map(float, face.split(","))
@@ -415,7 +420,7 @@ def transcribe(source, start, end, model=None, *, language="auto"):
         threads = runtime.active.whisper_threads
         entry = MODELS.get(model)
         device = "cpu"
-        if runtime.acceleration == "auto" and runtime.cuda_transcription:
+        if runtime.speech_on_gpu():
             from ctranslate2 import get_cuda_device_count
             try:
                 device = "cuda" if get_cuda_device_count() else "cpu"
@@ -425,16 +430,18 @@ def transcribe(source, start, end, model=None, *, language="auto"):
             MODELS.clear()
 
         def load(target):
-            return WhisperModel(speech_model_path(model), device=target,
-                                compute_type="int8_float16" if target == "cuda" else "int8",
-                                cpu_threads=threads, num_workers=1)
+            path = speech_model_path(model)
+            with runtime.media_slot():
+                return WhisperModel(path, device=target, compute_type="int8_float16" if target == "cuda" else "int8",
+                                    cpu_threads=threads, num_workers=1)
 
         def words(whisper):
-            segments, _ = whisper.transcribe(samples, word_timestamps=True, vad_filter=True,
-                                             beam_size=1 if model == "tiny" else 5,
-                                             language=None if language == "auto" else language)
-            return [(float(start + w.start), float(start + w.end), w.word.strip())
-                    for s in segments for w in (s.words or []) if w.word.strip()]
+            with runtime.media_slot():
+                segments, _ = whisper.transcribe(samples, word_timestamps=True, vad_filter=True,
+                                                 beam_size=1 if model == "tiny" else 5,
+                                                 language=None if language == "auto" else language)
+                return [(float(start + w.start), float(start + w.end), w.word.strip())
+                        for s in segments for w in (s.words or []) if w.word.strip()]
 
         try:
             if model not in MODELS:
@@ -450,11 +457,11 @@ def transcribe(source, start, end, model=None, *, language="auto"):
 
 
 def audio_silences(source, low, high, cleanup):
-    result = sp.run(["ffmpeg", "-hide_banner", "-loglevel", "info", "-nostdin",
-                     "-ss", str(low), "-i", str(source), "-t", str(high - low),
-                     "-vn", "-map", "0:a:0", "-af",
-                     f"silencedetect=noise={cleanup.noise}dB:d={cleanup.pause}",
-                     "-f", "null", "-"], capture_output=True, check=False)
+    args = ["ffmpeg", "-hide_banner", "-loglevel", "info", "-nostdin", "-ss", str(low), "-i", str(source),
+            "-t", str(high - low), "-vn", "-map", "0:a:0", "-af",
+            f"silencedetect=noise={cleanup.noise}dB:d={cleanup.pause}", "-f", "null", "-"]
+    with runtime.media_slot():
+        result = sp.run(runtime.multimedia_args(args), capture_output=True, **runtime.child_options())
     log = result.stderr.decode("utf-8", "replace")
     if result.returncode:
         raise RuntimeError(f"Falha ao medir silêncio: {log[-500:]}")
@@ -929,6 +936,7 @@ def _process(source, folder, options, log, screening, staging_dir, on_review, re
                 variant["finishing"] = render_clip(source, publish, shots,
                                                    words if options.captions else [], cut_options,
                                                    hook, timing_words=words)
+                log(f"Codificador de vídeo: {variant['finishing']['video_encoder']}.")
                 if screening is not None:
                     from final_screen import evaluate
                     log(f"Revisão técnica e editorial: {destination.name}.")
@@ -1256,13 +1264,14 @@ def capture_once(python, url, folder, seconds, schedule, stop, log, segment_seco
     quality = runtime.active.quality
     if capture_height:
         quality = live_variant_order(capture_height)
+    buffer = ["--ringbuffer-size", "8M"] if runtime.active.low_priority and not catchup and (capture_height or 720) <= 720 else []
     input_args = extractor_live_media(python, url, capture_height) if direct else ["-i", "pipe:0"]
     if stop.is_set():
         return False
     if dvr:
         log(f"Recuperando o início ainda disponível na janela pública de {url}.")
     with (folder / "captura.log").open("wb") as errors:
-        sl = None if direct else sp.Popen(streamlink_cli(python) + ["--stdout", *latency,
+        sl = None if direct else sp.Popen(streamlink_cli(python) + ["--stdout", *latency, *buffer,
                                       "--stream-segment-threads", str(1 if runtime.active.low_priority else runtime.active.dvr_threads),
                                       "--stream-segment-timeout", "15", "--stream-timeout", "25",
                                       "--loglevel", "warning", url, quality],
