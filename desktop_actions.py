@@ -32,8 +32,8 @@ def pick(data):
             return {"path": filedialog.askdirectory(parent=window, initialdir=str(output_dir()), title="Salvar cortes em")}
         if data.get("kind") == "visual-library":
             return {"path": filedialog.askdirectory(parent=window, title="Pasta de memes e B-roll")}
-        if data.get("kind") == "visual-backdrop":
-            return {"path": filedialog.askopenfilename(parent=window, title="Imagem ou vídeo de fundo",
+        if data.get("kind") in ("visual-backdrop", "visual-asset"):
+            return {"path": filedialog.askopenfilename(parent=window, title="Escolher mídia da biblioteca",
                                                        filetypes=[("Mídia", "*.png *.jpg *.jpeg *.webp *.gif *.mp4 *.mov *.webm")])}
         if data.get("kind") == "preset":
             project = filedialog.askdirectory(parent=window, title="Projeto do AI Video Director")
@@ -133,7 +133,8 @@ def library(platform):
             path = Path(item["path"]).resolve()
             if path.is_relative_to(folder.resolve()) and path.is_file() and path.suffix.lower() == ".mp4":
                 rows[item["id"]] = {key: item[key] for key in
-                    ("id", "title", "description", "tags", "reason", "score", "weighted_score", "duplicate_of")}
+                    ("id", "title", "description", "tags", "reason", "score", "weighted_score", "duplicate_of",
+                     "vote", "feedback_points", "retention_points", "topic", "similar_title")}
     return sorted(rows.values(), key=lambda row: -row["weighted_score"])[:30]
 
 
@@ -142,6 +143,33 @@ def action(command, data):
         return start_job(command, data)
     if command == "pick":
         return pick(data)
+    if command in ("visual-library", "visual-media", "visual-import", "visual-enable"):
+        from visual_catalog import activate, card, catalog, import_asset, item_for
+        if command == "visual-library":
+            return [card(*row) for row in catalog(ROOT)]
+        if command == "visual-import":
+            return {"id": import_asset(data)}
+        if command == "visual-enable":
+            activate(ROOT, data["id"], data["enabled"] is True)
+            return {}
+        asset, _, _ = item_for(ROOT, data["id"])
+        if not asset.path.is_file():
+            raise ValueError("Arquivo indisponível.")
+        return {"file": str(asset.path)}
+    if command in ("visual-reviews", "visual-review-media", "visual-review-queue"):
+        from visual_review import get_review, previews, queue_review
+        if command == "visual-reviews":
+            return previews()
+        if command == "visual-review-queue":
+            return queue_review(data)
+        _, path, record = get_review(data["job"], data["id"])
+        preview = path.with_name(record["preview"]).resolve()
+        if not preview.is_relative_to(path.parent.resolve()) or not preview.is_file():
+            raise ValueError("Arquivo da prévia indisponível.")
+        return {"file": str(preview)}
+    if command == "storage":
+        from storage_use import storage
+        return storage(ROOT, folders())
     if command == "jobs":
         rows = list_jobs(8)
         return {"jobs": [{"id": row["id"], "state": row["state"], "detail": row["detail"], "cancel": bool(row["cancel"]),
@@ -187,7 +215,7 @@ def action(command, data):
         return {"message": "Studio aberto no navegador."}
     if command == "library":
         return library(platform)
-    if command in ("clip-preview", "schedule", "review", "publish", "retention"):
+    if command in ("clip-preview", "schedule", "review", "publish", "retention", "feedback"):
         from publish_state import browser_draft, review_info
         folder, path, row = clip_record(data["id"])
         if command == "clip-preview":
@@ -201,6 +229,10 @@ def action(command, data):
             from posting_queue import retention
             retention(folder, row["id"], platform, float(data["value"]), int(data["views"]))
             return {"message": "Retenção registrada para calibrar a nota."}
+        if command == "feedback":
+            from posting_queue import feedback
+            feedback(folder, row["id"], platform, data.get("vote", ""))
+            return {"message": "Decisão registrada."}
         planned = datetime.fromisoformat(data["planned"])
         if planned <= datetime.now(tz=planned.tzinfo):
             raise ValueError("Escolha um horário no futuro.")

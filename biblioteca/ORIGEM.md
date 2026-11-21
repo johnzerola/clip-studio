@@ -5,5 +5,7 @@ O acervo usado automaticamente pelo painel Codex fica em `Acervo/`. O manifesto 
 - [Catálogo NASA da Apollo 15](https://images-api.nasa.gov/search?nasa_id=Apollo%2015%20Never%20Been%20on%20a%20Ride%20like%20this%20Before)
 - [Lua fotografada pela Clementine](https://science.nasa.gov/photojournal/nearside-of-earths-moon-as-seen-by-the-clementine-spacecraft/)
 - [Diretrizes de uso de imagens da NASA](https://www.nasa.gov/nasa-brand-center/images-and-media/)
+- [Raposa fotografada por John J. Mosesso, USGS](https://www.usgs.gov/media/images/red-fox-vulpes-vulpes)
+- [Chicago à noite fotografada da ISS, NASA Earth Observatory](https://science.nasa.gov/image-detail/amf-e69cef4a-300f-4dc6-8681-ba7b0308c063/)
 
 As duas ilustrações de gatinho da biblioteca clássica continuam disponíveis naquela biblioteca. A seleção automática do Codex usa somente o acervo real, projetos do Director com mídia marcada como real ou uma pasta indicada pelo usuário.

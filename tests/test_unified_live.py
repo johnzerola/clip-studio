@@ -16,8 +16,9 @@ from viral_rank import chat_bonus, has_chat_reaction, rank_chat
 class UnifiedLiveTest(unittest.TestCase):
     def test_bundled_catalog_uses_only_manifest_media_with_matched_hashes(self):
         root = Path(__file__).resolve().parents[1]
-        library, background, backdrop = configured_visuals(root, {"visual_mode": "local", "visual_background": "catalog"})
-        self.assertEqual({item.path.suffix for item in library}, {".gif", ".mp4"})
+        with TemporaryDirectory() as directory, patch.dict("os.environ", {"LOCALAPPDATA": directory}):
+            library, background, backdrop = configured_visuals(root, {"visual_mode": "local", "visual_background": "catalog"})
+        self.assertEqual({item.path.suffix for item in library}, {".gif", ".mp4", ".jpg"})
         self.assertEqual(background, "catalog")
         self.assertTrue(backdrop and all(item.is_current() for item in [*library, backdrop]))
 

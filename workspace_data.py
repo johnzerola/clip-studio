@@ -32,11 +32,24 @@ def observed(db, platform, theme):
     return max(-5, min(5, round(delta / 4)))
 
 
+def feedback_points(db, platform):
+    rows = db.execute("""SELECT c.title,c.description,f.vote FROM editorial_feedback f JOIN clips c ON c.id=f.clip
+                       WHERE f.platform=? AND c.result='ready'""", (platform,))
+    counts = {}
+    for title, description, vote in rows:
+        theme = topic(f"{title} {description}")
+        total, sum_votes = counts.get(theme, (0, 0))
+        counts[theme] = (total + 1, sum_votes + (1 if vote == "approved" else -1))
+    return {theme: round(6 * value / (count + 4)) for theme, (count, value) in counts.items() if count >= 3}
+
+
 def editorial_weights(folder):
     if not (folder / "postagens.sqlite3").is_file():
         return {}
     with closing(db_open(folder)) as db:
-        return {theme: round(sum(observed(db, network, theme) for network in ("YouTube", "TikTok")) / 2)
+        networks = ("YouTube", "TikTok")
+        votes = {network: feedback_points(db, network) for network in networks}
+        return {theme: round(sum(observed(db, network, theme) + votes[network].get(theme, 0) for network in networks) / 2)
                 for theme in (*TOPICS, "História")}
 
 

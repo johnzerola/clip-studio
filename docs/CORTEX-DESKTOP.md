@@ -17,6 +17,14 @@ Em **Memes, B-roll e fundo**, use o [acervo real incluído](../biblioteca/ORIGEM
 
 Em **Modelar**, a biblioteca lê `media-manifest.json` do projeto selecionado do AI Video Director. Para autorização de uso automático, identifique as mídias reais aprovadas com uma tag `real-footage` ou com `sourceKind` igual a `camera`, `photograph`, `real-footage` ou `archival`. Uma tag como `cue:olha isso` define a fala de entrada. Os arquivos usados têm hash conferido. A origem fica em `cortes.json` e os créditos preenchidos no manifesto acompanham a descrição sugerida dos clipes aprovados.
 
+A **Biblioteca visual** exibe prévias, fonte, licença e frases de entrada. Use **Adicionar mídia minha** para cadastrar o arquivo original e habilite **Usar na edição** depois de revisar. O cadastro é local e aponta para o arquivo existente. Mantenha-o acessível no caminho cadastrado.
+
+Para um vídeo local, habilite **Revisar inserções antes de exportar**. As prévias de 360 × 640 ficam em **Gerados**, com opções para manter, trocar ou remover uma inserção. A exportação refaz o mesmo plano na resolução escolhida. Guarde o vídeo de origem durante a revisão.
+
+Em **Gerados**, aprovações, descartes e retenção informada ajudam a calibrar a nota pela rede e pelo tema. O ajuste editorial usa pelo menos três decisões do mesmo tema. A revisão exibe a justificativa da análise inicial, as contribuições da retenção e das decisões e os cortes parecidos.
+
+Em **Ajustes**, use **Ver uso do disco** para medir versões, caches e capturas monitoradas. Em um volume Windows compatível, atualizações com `requirements.txt` idêntico reaproveitam os arquivos de dependências por hard links. O instalador valida o ambiente antes de trocar os atalhos.
+
 Escolha português, inglês, espanhol ou detecção automática para transcrever a fala. O modo Leve usa uma tarefa local por vez. A triagem de lives combina transcrição, áudio, movimento e, quando disponível, reações de espectadores distintos no chat. A nota é uma estimativa editorial de potencial.
 
 Durante a live, o gravador copia o sinal para blocos temporários no disco. A triagem descarta os blocos antigos e conserva uma janela curta para achar o início do corte. Ao encerrar, remove as sobras da captura. Depois da tentativa de edição, remove os candidatos temporários e conserva os MP4 finais e os registros de diagnóstico.

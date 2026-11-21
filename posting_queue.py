@@ -111,6 +111,8 @@ def db_open(folder):
         );
         CREATE TABLE IF NOT EXISTS clip_exports (path TEXT PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS clip_reviews (clip TEXT PRIMARY KEY, detail TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS editorial_feedback (clip TEXT NOT NULL, platform TEXT NOT NULL,
+            vote TEXT NOT NULL, PRIMARY KEY (clip,platform));
         CREATE TABLE IF NOT EXISTS clip_signatures (
             clip TEXT PRIMARY KEY, speech TEXT NOT NULL, visual TEXT NOT NULL, duration REAL NOT NULL,
             source TEXT NOT NULL, ranges TEXT NOT NULL, duplicate_of TEXT
@@ -195,16 +197,30 @@ def ranked(folder, limit=250, *, platform=None):
                                 (limit,)).fetchall()
         if platform is None:
             return candidates
-        from workspace_data import observed, topic
+        from workspace_data import observed, topic, feedback_points
 
         changes, _ = retention_adjustments(db, platform)
         themes = {item["id"]: topic(f"{item['title']} {item['description']}") for item in candidates}
         benefits = {theme: observed(db, platform, theme) for theme in set(themes.values())}
+        votes = dict(db.execute("SELECT clip,vote FROM editorial_feedback WHERE platform=?", (platform,)))
+        weights = feedback_points(db, platform)
         rows = [dict(row, topic=themes[row["id"]], topic_points=benefits[themes[row["id"]]],
+                     vote=votes.get(row["id"], ""), feedback_points=weights.get(themes[row["id"]], 0),
+                     retention_points=changes.get(row["score"] // 10, 0) + benefits[themes[row["id"]]],
                      weighted_score=max(0, min(100, row["score"] + changes.get(row["score"] // 10, 0)
-                                               + benefits[themes[row["id"]]]))
+                                               + benefits[themes[row["id"]]] + weights.get(themes[row["id"]], 0)))
                      if row["result"] == "ready" else row["score"]) for row in candidates]
         return sorted(rows, key=lambda row: (row["result"] != "ready", -row["weighted_score"]))
+
+
+def feedback(folder, clip, platform, vote):
+    if platform not in STUDIOS or vote not in ("approved", "rejected", ""):
+        raise ValueError("Decisão inválida.")
+    with closing(db_open(folder)) as db, db:
+        if vote:
+            db.execute("INSERT OR REPLACE INTO editorial_feedback VALUES (?,?,?)", (clip, platform, vote))
+        else:
+            db.execute("DELETE FROM editorial_feedback WHERE clip=? AND platform=?", (clip, platform))
 
 
 def index_previous(folder, notify, limit=30, stop=None):

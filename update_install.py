@@ -108,6 +108,8 @@ def install(request, notify):
     expected = checksum.read_text(encoding="utf-8-sig").split()[0]
     notify("Verificando e preparando a nova instalação…")
     extract_package(package, expected, destination)
+    package.unlink()
+    checksum.unlink()
     if (destination / "VERSION").read_text(encoding="utf-8").strip() != tag[1:]:
         raise ValueError("A versão do pacote diverge da release.")
     prefs = root / "preferencias.local.json"

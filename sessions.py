@@ -357,7 +357,10 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                 future.result()
         clips = sum(1 for _ in (batch / "Clipes prontos").rglob("clip_*.mp4"))
         if errors.empty():
-            if options.render:
+            if options.review_visuals:
+                previews = sum(1 for _ in (batch / "Clipes prontos").rglob("preview-*.mp4"))
+                log(f"Sessão concluída: {previews} prévia(s) aguardando revisão.")
+            elif options.render:
                 log(f"Sessão concluída: {clips} MP4(s).")
                 if not clips:
                     log("Nenhum clipe foi exportado. Confira captura, nota mínima e decisões acima.")

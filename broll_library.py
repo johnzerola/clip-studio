@@ -172,7 +172,10 @@ def configured_visuals(root, request):
         raise ValueError("A pasta de memes e B-roll não está disponível.")
     library = []
     backdrop = None
-    bundled = director_items(root / "biblioteca/Acervo", group="Acervo de mídias reais") if mode != "off" or background == "catalog" else []
+    bundled = []
+    if mode != "off" or background == "catalog":
+        from visual_catalog import catalog
+        bundled = [asset for asset, enabled, _ in catalog(root) if enabled]
     if mode != "off":
         library.extend(asset for asset in bundled if asset.role != "background")
         library.extend(library_items(None, custom))

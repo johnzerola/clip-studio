@@ -27,8 +27,13 @@ if (-not (Test-Path -LiteralPath $runtime)) {
         $python = Find-Python313
     }
     if (-not $python) { throw 'Python 3.13 x64 ausente. Use o instalador oficial ou Instalar.cmd --automatico.' }
-    & $python -m venv (Join-Path $project '.venv')
-    if ($LASTEXITCODE -ne 0) { throw 'Falha ao criar o ambiente Python.' }
+    & $python -X utf8 (Join-Path $PSScriptRoot 'reuse_runtime.py') $project
+    if (Test-Path -LiteralPath $runtime) {
+        Write-Host 'Dependências idênticas reaproveitadas, com arquivos compartilhados no disco.'
+    } else {
+        & $python -m venv (Join-Path $project '.venv')
+        if ($LASTEXITCODE -ne 0) { throw 'Falha ao criar o ambiente Python.' }
+    }
 }
 
 if (-not (Get-Command ffmpeg.exe -ErrorAction SilentlyContinue) -or
@@ -41,8 +46,15 @@ if (-not $Check) {
     if ($InstallOllama -and -not (Get-Command ollama.exe -ErrorAction SilentlyContinue)) {
         Install-WithWinget 'Ollama.Ollama'
     }
-    & $runtime -m pip install --disable-pip-version-check -r (Join-Path $project 'requirements.txt')
-    if ($LASTEXITCODE -ne 0) { throw 'Falha ao instalar dependências Python.' }
+    $reuseMarker = Join-Path $project '.venv/reused-requirements.sha256'
+    if (Test-Path -LiteralPath $reuseMarker) {
+        $existingHash = (Get-Content -LiteralPath $reuseMarker -Raw).Trim()
+        $newHash = (Get-FileHash -LiteralPath (Join-Path $project 'requirements.txt') -Algorithm SHA256).Hash
+        if ($newHash -ne $existingHash) { throw 'Dependências diferentes. Execute o instalador em uma nova pasta.' }
+    } else {
+        & $runtime -m pip install --disable-pip-version-check -r (Join-Path $project 'requirements.txt')
+        if ($LASTEXITCODE -ne 0) { throw 'Falha ao instalar dependências Python.' }
+    }
 }
 & $runtime -m pip check
 if ($LASTEXITCODE -ne 0) { throw 'Dependências inconsistentes.' }

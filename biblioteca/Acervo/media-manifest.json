@@ -26,6 +26,30 @@
       "tags": ["cue:foguete", "cue:decolou", "cue:decolagem", "cue:lançamento espacial"]
     },
     {
+      "relativePath": "raposa-usgs.jpg",
+      "originalName": "Raposa vermelha.jpg",
+      "sha256": "efe5e89c93b61cdd21e3a10e19830141bb463f95c8555ee91ea09c3ad1ecd5bf",
+      "role": "broll",
+      "sourceKind": "photograph",
+      "rightsStatus": "PDM",
+      "license": "Domínio público (USGS)",
+      "sourceUrl": "https://www.usgs.gov/media/images/red-fox-vulpes-vulpes",
+      "attribution": "John J. Mosesso / USGS",
+      "tags": ["cue:raposa", "cue:raposa vermelha"]
+    },
+    {
+      "relativePath": "chicago-noite.jpg",
+      "originalName": "Chicago à noite vista da ISS.jpg",
+      "sha256": "ac78d9c1f5194062a95a1edb07dc62b0f9b1451fa57dbbaf106157a64ddf1190",
+      "role": "broll",
+      "sourceKind": "photograph",
+      "rightsStatus": "PDM",
+      "license": "NASA Media Usage Guidelines https://www.nasa.gov/nasa-brand-center/images-and-media/",
+      "sourceUrl": "https://science.nasa.gov/image-detail/amf-e69cef4a-300f-4dc6-8681-ba7b0308c063/",
+      "attribution": "NASA Earth Observatory / ISS",
+      "tags": ["cue:luzes da cidade", "cue:chicago", "cue:cidade à noite"]
+    },
+    {
       "relativePath": "lua-clementine.jpg",
       "originalName": "Lua fotografada pela Clementine.jpg",
       "sha256": "c5bb394a48613440f24c59deb5e7cda253b14a18696e54f6f2cf4e37fbf92904",

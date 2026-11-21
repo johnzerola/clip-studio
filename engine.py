@@ -81,9 +81,15 @@ class Options:
     visual_library: tuple[Asset, ...] = ()
     visual_background: str = "original"
     background_asset: Asset | None = None
+    review_visuals: bool = False
+    preview_resolution: bool = False
+    visual_disabled: bool = False
+    visual_plan: tuple[int, float, Asset] | None = None
 
     @property
     def frame_size(self):
+        if self.preview_resolution:
+            return 360, 640
         return (1080, 1920) if self.full_hd else (WIDTH, HEIGHT)
 
     def __post_init__(self):
@@ -534,7 +540,8 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
     accents = accent_shots(shots) if options.polish else {}
     spoken = timing_words if timing_words is not None else words
     pending_assets = {asset.path: asset for asset in options.visual_library}
-    while True:
+    inserts = {}
+    while not options.visual_disabled and options.visual_plan is None:
         picked = tuple((asset.path, asset.cues) for asset in pending_assets.values())
         inserts = pick_broll(options.broll_dir, shots, spoken, full_screen=v9, selected=picked + options.broll_assets,
                              reaction=bool(pending_assets))
@@ -543,6 +550,12 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
         if asset is None or asset.is_current():
             break
         del pending_assets[selected]
+    if options.visual_plan is not None:
+        shot, at, planned = options.visual_plan
+        if not planned.is_current():
+            raise ValueError("A mídia escolhida mudou. Selecione outra inserção.")
+        pending_assets[planned.path] = planned
+        inserts = {shot: (planned.path, at)}
     generated = contextual_card(scratch, shots, spoken) if v9 and options.contextual_broll and not inserts else {}
     inserts = inserts or generated
     background = options.background_asset
@@ -723,7 +736,14 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
         compression = {"profile": options.compression, "applied": False,
                        "reason": f"Compressão falhou: {type(error).__name__}"}
     partial.replace(destination)
+    insertion = None
+    if inserts:
+        shot, (path, at) = next(iter(inserts.items()))
+        if path in pending_assets:
+            insertion = {"shot": shot, "offset": at, "at": sum(b-a for a, b, _ in shots[:shot]) + at,
+                         "id": pending_assets[path].digest, "label": pending_assets[path].label, "path": str(path)}
     return {"accents": list(accents.values()), "broll": [asset.name for asset, _ in inserts.values()],
+            "visual_insert": insertion,
             "visual_background": {"mode": backdrop_mode, "shots": background_shots,
                                   "asset": background.key if background and background_shots else None},
             "visual_credits": list(visual_credits.values()),
@@ -877,6 +897,11 @@ def _process(source, folder, options, log, screening, staging_dir, on_review, re
             destination = folder / f"clip_{index:02}{suffix}.mp4"
             log(f"Renderizando {destination.name} ({style}, {len(shots)} plano(s)).")
             variant = entry["variants"][style]
+            if options.review_visuals:
+                from visual_review import prepare_preview
+                prepare_preview(original_source, folder, shots, words, cut_options, hook, screening)
+                log("Prévia pronta. Revise as inserções antes de exportar.")
+                continue
             publish = (destination if screening is None else
                        (staging_dir or folder) / f".review-{folder.name}-{destination.name}")
             try:

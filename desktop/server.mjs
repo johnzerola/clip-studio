@@ -17,8 +17,11 @@ delete process.env.CORTEX_SESSION;
 delete process.env.CORTEX_LAUNCH_CODE;
 if (!token || token.length < 32) throw new Error("Inicie o Clip Studio pelo executável.");
 const python = path.join(root, ".venv/Scripts/python.exe");
-const commands = new Set(["render", "live", "modelar", "jobs", "open", "rhythm", "cancel", "open-live", "pick", "ai-status", "ai-install", "update-status", "update-install", "library", "clip-open-studio", "agenda", "schedule", "review", "youtube-account", "youtube-connect", "publish", "retention"]);
-const longRequests = new Set(["pick", "modelar", "ai-install", "youtube-connect", "publish"]);
+const commands = new Set(["render", "live", "modelar", "jobs", "open", "rhythm", "cancel", "open-live", "pick", "ai-status", "ai-install", "update-status", "update-install", "library", "clip-open-studio", "agenda", "schedule", "review", "youtube-account", "youtube-connect", "publish", "retention", "feedback", "visual-library", "visual-import", "visual-enable", "visual-reviews", "visual-review-queue", "storage"]);
+const longRequests = new Set(["pick", "modelar", "ai-install", "youtube-connect", "publish", "visual-import", "storage"]);
+const mediaCommands = new Map([["/_desktop/media", "clip-preview"], ["/_desktop/visual-media", "visual-media"], ["/_desktop/review-media", "visual-review-media"]]);
+const mediaTypes = { ".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm", ".png": "image/png",
+  ".gif": "image/gif", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" };
 function matches(value, expected) {
   return typeof value === "string" && typeof expected === "string" && value.length === expected.length &&
     Buffer.byteLength(value) === Buffer.byteLength(expected) && timingSafeEqual(Buffer.from(value), Buffer.from(expected));
@@ -35,8 +38,10 @@ function run(command, data) {
   });
 }
 let editing = false;
-async function sendClip(req, res, id) {
-  const { file } = await run("clip-preview", { id });
+async function sendMedia(req, res, command, params) {
+  const { file } = await run(command, params);
+  const mime = mediaTypes[path.extname(file).toLowerCase()];
+  if (!mime) { res.writeHead(404).end(); return; }
   const { size } = await stat(file);
   const range = req.headers.range;
   const bounds = range?.match(/^bytes=(\d+)-(\d*)$/);
@@ -46,7 +51,7 @@ async function sendClip(req, res, id) {
     res.writeHead(416, { "Content-Range": `bytes */${size}` }).end();
     return;
   }
-  const headers = { "Content-Type": "video/mp4", "Accept-Ranges": "bytes", "Content-Length": end - start + 1 };
+  const headers = { "Content-Type": mime, "X-Content-Type-Options": "nosniff", "Accept-Ranges": "bytes", "Content-Length": end - start + 1 };
   if (range) headers["Content-Range"] = `bytes ${start}-${end}/${size}`;
   res.writeHead(range ? 206 : 200, headers);
   if (req.method === "HEAD") { res.end(); return; }
@@ -81,9 +86,9 @@ const server = http.createServer(async (req, res) => {
   if (req.headers.cookie) req.headers.cookie = req.headers.cookie.split(/;\s*/).filter(value => !value.startsWith("cortex_desktop=")).join("; ");
   if (req.url === "/_desktop/ready") { res.end("ready"); return; }
   if (!req.url.startsWith("/_desktop/")) { await middleware(req, res); return; }
-  if (url.pathname === "/_desktop/media" && ["GET", "HEAD"].includes(req.method)) {
+  if (mediaCommands.has(url.pathname) && ["GET", "HEAD"].includes(req.method)) {
     res.setHeader("Cache-Control", "no-store");
-    try { await sendClip(req, res, url.searchParams.get("id")); }
+    try { await sendMedia(req, res, mediaCommands.get(url.pathname), { id: url.searchParams.get("id"), job: url.searchParams.get("job") }); }
     catch { res.writeHead(404).end(); }
     return;
   }
@@ -92,7 +97,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(403).end(); return;
   }
   res.setHeader("Cache-Control", "no-store");
-  const exclusive = ["live", "modelar", "render", "pick", "update-install", "publish", "youtube-connect"].includes(command);
+  const exclusive = ["live", "modelar", "render", "pick", "update-install", "publish", "youtube-connect", "visual-review-queue"].includes(command);
   if (exclusive && editing) { res.writeHead(409).end("Conclua a seleção aberta."); return; }
   if (exclusive) editing = true;
   try {

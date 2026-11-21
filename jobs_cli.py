@@ -68,7 +68,7 @@ def prepare(request):
             raise ValueError("Para buscar replays, informe apenas links de canais.")
         for url, _, _ in sources:
             archive_url(url)
-    if style not in STYLES or profile not in PROFILES or mode not in ("plan", "render"):
+    if style not in STYLES or profile not in PROFILES or mode not in ("plan", "render", "preview"):
         raise ValueError("Modo, estilo ou perfil inválido.")
     if not (10 <= duration <= 180 and 1 <= count <= 8 and 0 <= minutes <= 720 and 20 <= threshold <= 95):
         raise ValueError("Duração 10–180 s, 1–8 clipes, captura 0–720 min e nota 20–95.")
@@ -77,11 +77,13 @@ def prepare(request):
         raise ValueError("A saída precisa ser uma pasta.")
     from painel import parse_ranges
     manual = parse_ranges(request.get("ranges") or "")
+    if mode == "preview" and any(kind != "file" for _, kind, _ in sources):
+        raise ValueError("A prévia de inserções usa arquivos de vídeo locais.")
     if manual and (len(sources) != 1 or sources[0][1] != "file"):
         raise ValueError("Cortes manuais precisam de um único arquivo local.")
     library, background, backdrop = configured_visuals(ROOT, request)
     opts = Options(style, "", "", "direito", bool(request.get("captions", True)), False, duration, count,
-                   mode == "render", manual=manual, cleanup=Cleanup(True, True, True, True, 1.2, -40),
+                   mode != "plan", manual=manual, cleanup=Cleanup(True, True, True, True, 1.2, -40),
                    auto_face=True, look="shorts", polish=True, voice_polish=True, jcut_ms=130,
                    transition="v9", compression="compacto", auto_music=bool(request.get("music", True)),
                    contextual_broll=False, keep_manual_edges=bool(manual), channel_handle=request.get("channel_handle") or "",
@@ -89,7 +91,7 @@ def prepare(request):
                    smart_reframe=bool(request.get("smart_reframe", False)), speech_language=language,
                    target_shot_seconds=target_shot_seconds, full_hd=capture_height == 1080,
                    precompress=bool(request.get("precompress", True)), visual_library=library,
-                   visual_background=background, background_asset=backdrop)
+                   visual_background=background, background_asset=backdrop, review_visuals=mode == "preview")
     scout = ScoutSettings(model=str(request.get("model") or ""), threshold=threshold, clip_seconds=duration,
                           review_final=bool(request.get("review", False)), continuous=minutes == 0,
                           catchup=bool(request.get("catchup", False)), performance=profile, live_poll_hours=poll_hours,
@@ -116,10 +118,14 @@ def run_pending(key):
         if row["state"] == "cancelled":
             return 0
         request = request_for(key)
-        sources, opts, minutes, workers, output, wait, scout = prepare(request)
         ensure_media_path()
         stop = threading.Event()
         signal.signal(signal.SIGINT, lambda *_: stop.set())
+        if request.get("visual_review"):
+            from job_registry import start
+            from visual_review import run_review
+            return start(key, lambda event, session: run_review(request, event, session, stop), stop, lambda _line: None)
+        sources, opts, minutes, workers, output, wait, scout = prepare(request)
         return tracked_session(row["origin"], sources, opts, minutes, workers, output, wait, stop,
                                lambda _line: None, scout, key=key)
     except Exception as error:
@@ -134,7 +140,7 @@ def main():
     create = sub.add_parser("submit", help="Iniciar um trabalho que aparece no painel")
     create.add_argument("sources", nargs="+")
     create.add_argument("--output", "--out")
-    create.add_argument("--mode", choices=("plan", "render"), default="render")
+    create.add_argument("--mode", choices=("plan", "render", "preview"), default="render")
     create.add_argument("--style", choices=STYLES, default="dynamic")
     create.add_argument("--performance", choices=tuple(PROFILES), default="leve")
     create.add_argument("--acceleration", choices=("auto", "cpu"), default="auto")
