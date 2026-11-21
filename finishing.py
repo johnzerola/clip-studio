@@ -69,7 +69,7 @@ def audio_runs(shots, frame_counts, fps=30):
     return [(a, b, frames / fps) for a, b, frames in runs]
 
 
-def pick_broll(folder, shots, words, *, full_screen=False, selected=()):
+def pick_broll(folder, shots, words, *, full_screen=False, selected=(), reaction=False):
     from broll_library import MEDIA
 
     assets = {}
@@ -88,7 +88,7 @@ def pick_broll(folder, shots, words, *, full_screen=False, selected=()):
         return {}
     sizes = sorted({len(cue) for cue in assets if isinstance(cue, tuple)}, reverse=True)
     for i, (start, end, style) in enumerate(shots):
-        if style not in {"split", "gamecam", "game"}:
+        if style not in {"split", "gamecam", "game"} and not (reaction and style in {"face", "reaction"}):
             continue
         spoken = [(time, normalized(word)) for time, finish, word in words
                   if time >= start and finish <= end and normalized(word)]

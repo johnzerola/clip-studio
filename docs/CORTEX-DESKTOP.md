@@ -13,6 +13,10 @@ A partir da v0.7.1, os atalhos **Codex** e **Clip Studio**, `Iniciar.cmd`, `Code
 | Editor e gerados | O Editor mantém as ferramentas de edição manual do Hook Spark. Em **Gerados**, veja a prévia e a nota dos MP4 aprovados pelo V9 e salve rascunhos na agenda local. Confirme o envio no Studio da rede. |
 | Integrações | Confira e instale o Ollama opcional para a revisão dos cortes. |
 
+Em **Memes, B-roll e fundo**, use o [acervo real incluído](../biblioteca/ORIGEM.md) ou selecione sua pasta de GIFs, fotos e vídeos autorizados. O nome do arquivo (por exemplo `olha-isso.gif`) serve de pista para a transcrição. A edição coloca até uma inserção breve por clipe. A moldura escura ou um fundo de mídia opcional entra nos closes e reações. Os planos de gameplay seguem a configuração V9.
+
+Em **Modelar**, a biblioteca lê `media-manifest.json` do projeto selecionado do AI Video Director. Para autorização de uso automático, identifique as mídias reais aprovadas com uma tag `real-footage` ou com `sourceKind` igual a `camera`, `photograph`, `real-footage` ou `archival`. Uma tag como `cue:olha isso` define a fala de entrada. Os arquivos usados têm hash conferido. A origem fica em `cortes.json` e os créditos preenchidos no manifesto acompanham a descrição sugerida dos clipes aprovados.
+
 Escolha português, inglês, espanhol ou detecção automática para transcrever a fala. O modo Leve usa uma tarefa local por vez. A triagem de lives combina transcrição, áudio, movimento e, quando disponível, reações de espectadores distintos no chat. A nota é uma estimativa editorial de potencial.
 
 Durante a live, o gravador copia o sinal para blocos temporários no disco. A triagem descarta os blocos antigos e conserva uma janela curta para achar o início do corte. Ao encerrar, remove as sobras da captura. Depois da tentativa de edição, remove os candidatos temporários e conserva os MP4 finais e os registros de diagnóstico.

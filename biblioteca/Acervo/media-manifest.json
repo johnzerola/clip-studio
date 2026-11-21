@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "assets": [
+    {
+      "relativePath": "astronautas-apollo15.gif",
+      "originalName": "Astronautas da Apollo 15.gif",
+      "sha256": "c7e74b5a132187ce74a7f09efa04a8c3c4b76a984313f746b336b04f1473c406",
+      "role": "meme",
+      "sourceKind": "archival",
+      "rightsStatus": "PDM",
+      "license": "NASA Media Usage Guidelines https://www.nasa.gov/nasa-brand-center/images-and-media/",
+      "sourceUrl": "https://images-api.nasa.gov/search?nasa_id=Apollo%2015%20Never%20Been%20on%20a%20Ride%20like%20this%20Before",
+      "attribution": "NASA, Apollo 15 — trecho histórico convertido em GIF",
+      "tags": ["cue:andando na lua", "cue:gravidade zero", "cue:passo na lua"]
+    },
+    {
+      "relativePath": "foguete-apollo15.mp4",
+      "originalName": "Lançamento da Apollo 15.mp4",
+      "sha256": "842dda42867bfecd9df2833809af9fc9e0b3ec32d098bbf5183768e9274e5687",
+      "role": "broll",
+      "sourceKind": "archival",
+      "rightsStatus": "PDM",
+      "license": "NASA Media Usage Guidelines https://www.nasa.gov/nasa-brand-center/images-and-media/",
+      "sourceUrl": "https://images-api.nasa.gov/search?nasa_id=Apollo%2015%20Never%20Been%20on%20a%20Ride%20like%20this%20Before",
+      "attribution": "NASA, Apollo 15 — trecho histórico recortado, redimensionado e sem áudio",
+      "tags": ["cue:foguete", "cue:decolou", "cue:decolagem", "cue:lançamento espacial"]
+    },
+    {
+      "relativePath": "lua-clementine.jpg",
+      "originalName": "Lua fotografada pela Clementine.jpg",
+      "sha256": "c5bb394a48613440f24c59deb5e7cda253b14a18696e54f6f2cf4e37fbf92904",
+      "role": "background",
+      "sourceKind": "photograph",
+      "rightsStatus": "PDM",
+      "license": "NASA Media Usage Guidelines https://www.nasa.gov/nasa-brand-center/images-and-media/",
+      "sourceUrl": "https://science.nasa.gov/photojournal/nearside-of-earths-moon-as-seen-by-the-clementine-spacecraft/",
+      "attribution": "NASA/JPL/USGS, PIA00302",
+      "tags": []
+    }
+  ]
+}

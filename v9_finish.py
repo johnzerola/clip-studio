@@ -15,6 +15,18 @@ TOPICS = {
 RATE = 48000
 
 
+def background_graph(layer, width, height, media_index=None):
+    inner_width, inner_height = round(width * .9 / 2) * 2, round(height * .9 / 2) * 2
+    portrait = f"{layer}scale={inner_width}:{inner_height}:flags=lanczos,setsar=1"
+    if media_index is None:
+        return (f";{portrait},pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=0x111b2d,"
+                f"drawbox=x=(iw-{inner_width})/2-2:y=(ih-{inner_height})/2-2:"
+                f"w={inner_width + 4}:h={inner_height + 4}:c=0x637c9c@0.55:t=2[editorial_bg]")
+    return (f";[{media_index}:v]fps=30,scale={width}:{height}:force_original_aspect_ratio=increase:force_divisible_by=2,"
+            f"crop={width}:{height},setsar=1,drawbox=c=black@0.24:t=fill[art];"
+            f"{portrait}[foreground];[art][foreground]overlay=(W-w)/2:(H-h)/2[editorial_bg]")
+
+
 def contextual_card(folder, shots, words):
     for index, (start, end, style) in enumerate(shots):
         if style not in {"split", "gamecam", "game"}:

@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 from editorial import (Cleanup, clean_ranges, quiet_live_edits, refine_montage,
                        silence_edits, speech_gap_edits, transcript_edits)
 from facecam import estimate, gameplay_region
-from broll_library import STILLS
+from broll_library import Asset, STILLS
 from finishing import accent_shots, caption_groups, pick_broll
 from effects_bank import edge_transition, render_cues
 from compression import compress
@@ -78,6 +78,9 @@ class Options:
     target_shot_seconds: float = 3.0
     full_hd: bool = False
     precompress: bool = True
+    visual_library: tuple[Asset, ...] = ()
+    visual_background: str = "original"
+    background_asset: Asset | None = None
 
     @property
     def frame_size(self):
@@ -520,7 +523,7 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
     width, height = options.frame_size
     from audio_finish import loudness_filter, make_mix, program
 
-    from v9_finish import contextual_card, music_bed
+    from v9_finish import background_graph, contextual_card, music_bed
 
     source = media_for_seeking(source, scratch / "source.mp4")
     total, audio = probe(source)
@@ -530,9 +533,27 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
     v9 = options.polish and options.transition == "v9"
     accents = accent_shots(shots) if options.polish else {}
     spoken = timing_words if timing_words is not None else words
-    inserts = pick_broll(options.broll_dir, shots, spoken, full_screen=v9, selected=options.broll_assets)
+    pending_assets = {asset.path: asset for asset in options.visual_library}
+    while True:
+        picked = tuple((asset.path, asset.cues) for asset in pending_assets.values())
+        inserts = pick_broll(options.broll_dir, shots, spoken, full_screen=v9, selected=picked + options.broll_assets,
+                             reaction=bool(pending_assets))
+        selected = next(iter(inserts.values()), (None, None))[0]
+        asset = pending_assets.get(selected)
+        if asset is None or asset.is_current():
+            break
+        del pending_assets[selected]
     generated = contextual_card(scratch, shots, spoken) if v9 and options.contextual_broll and not inserts else {}
     inserts = inserts or generated
+    background = options.background_asset
+    backdrop_mode = options.visual_background
+    if backdrop_mode in {"director", "file", "catalog"} and not (background and background.is_current()):
+        backdrop_mode = "original"
+    background_shots = []
+    visual_credits = {}
+
+    def visual_input(asset_path):
+        return (["-loop", "1"] if asset_path.suffix.lower() in STILLS else ["-stream_loop", "-1"]) + ["-i", str(asset_path)]
     dissolve = next((i for i, (start, end, style) in enumerate(shots) if i and style == "face"
                      and end - start >= .9 and shots[i - 1][2] in {"game", "gamecam", "split"}
                      and shots[i - 1][1] - shots[i - 1][0] >= 1.35
@@ -579,23 +600,48 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
         if options.polish and options.transition == "linha" and index in accents:
             graph += edge_transition(layer, "[transition]")
             layer = "[transition]"
+        next_input = 1
+        if v9 and backdrop_mode != "original" and style in {"face", "reaction"}:
+            backdrop_input = None
+            if backdrop_mode in {"director", "file", "catalog"}:
+                backdrop_input = next_input
+                inputs += visual_input(background.path)
+                next_input += 1
+                if background.digest:
+                    visual_credits[background.key] = background.credit()
+            graph += background_graph(layer, width, height, backdrop_input)
+            layer = "[editorial_bg]"
+            background_shots.append(index + 1)
         insert_full = False
         if index in inserts:
-            asset, at = inserts[index]
-            insert_full = v9 and asset.stem.casefold().startswith("tela-")
-            inputs = (["-loop", "1"] if asset.suffix.lower() in STILLS else
-                      ["-stream_loop", "-1"]) + ["-i", str(asset)]
+            path, at = inserts[index]
+            registered = pending_assets.get(path)
+            insert_full = v9 and path.stem.casefold().startswith("tela-") and not (
+                registered and registered.role in {"meme", "meme-br"})
+            inputs += visual_input(path)
+            detail_source = f"[{next_input}:v]"
+            next_input += 1
+            if registered and registered.digest:
+                visual_credits[registered.key] = registered.credit()
             if insert_full:
-                graph += (";[1:v]fps=30,trim=duration=1.15,setpts=PTS-STARTPTS,"
+                graph += (f";{detail_source}fps=30,trim=duration=1.15,setpts=PTS-STARTPTS,"
                           f"scale={width}:{height}:force_original_aspect_ratio=increase:force_divisible_by=2,"
                           f"crop={width}:{height},setsar=1,setpts=PTS+{at:.3f}/TB[detail];"
                           f"{layer}[detail]overlay=0:0:eof_action=pass:"
                           f"enable='gte(t,{at:.3f})*lt(t,{at+1.15:.3f})'[inserted]")
             else:
                 slide = f":x='W-w-48+14*max(0,1-(t-{at:.3f})/0.16)^2':y=680" if v9 else ":x=W-w-48:y=680"
-                graph += (";[1:v]trim=duration=1.15,setpts=PTS-STARTPTS,"
-                          "scale=290:164:force_original_aspect_ratio=decrease:force_divisible_by=2,"
-                          "pad=290:164:(ow-iw)/2:(oh-ih)/2,drawbox=c=white@0.7:t=2,format=yuva420p,"
+                detail_w, detail_h = 290, 164
+                if registered:
+                    detail_w, detail_h = round(width / 6) * 2, round(width * .1) * 2
+                    margin = round(width * .06)
+                    close = style in {"face", "reaction"}
+                    x = f"W-w-{margin}+" if close else f"{margin}-"
+                    y = round(height * (.67 if close else .60))
+                    slide = f":x='{x}15*max(0,1-(t-{at:.3f})/0.16)^2':y={y}"
+                graph += (f";{detail_source}fps=30,trim=duration=1.15,setpts=PTS-STARTPTS,"
+                          f"scale={detail_w}:{detail_h}:force_original_aspect_ratio=decrease:force_divisible_by=2,"
+                          f"pad={detail_w}:{detail_h}:(ow-iw)/2:(oh-ih)/2,drawbox=c=white@0.7:t=2,format=yuva420p,"
                           "fade=t=in:d=0.10:alpha=1,fade=t=out:st=1.02:d=0.12:alpha=1,"
                           f"setpts=PTS+{at:.3f}/TB[detail];"
                           f"{layer}[detail]overlay=eof_action=pass{slide}:"
@@ -614,7 +660,7 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
             command(FF + ["-y", "-threads", "2", "-ss", str(tail), "-i", str(source),
                           "-filter_complex_threads", "1", "-filter_complex", tail_graph,
                           "-map", "[out]", "-an", "-frames:v", "7", *video_encoder, *ENC, str(outgoing)])
-            input_index = 2 if inputs else 1
+            input_index = next_input
             inputs += ["-i", str(outgoing)]
             graph += (f";[{input_index}:v]fps=30,setsar=1,format=yuv420p,setpts=PTS-STARTPTS[tail];"
                       f"{layer}fps=30,setsar=1,format=yuv420p,setpts=PTS-STARTPTS[incoming];"
@@ -623,7 +669,8 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
             blends.append({"frame": frame_start, "duration_frames": 5})
         if v9 and options.sfx != "nenhum":
             if index in inserts:
-                v9_cues.append((frame_start / 30 + inserts[index][1], "whoosh" if insert_full else "radio", -15))
+                v9_cues.append((frame_start / 30 + inserts[index][1], "whoosh" if insert_full else
+                                "impacto" if registered else "radio", -18 if registered else -15))
             if index == dissolve:
                 v9_cues.append(((frame_start - 1) / 30, "impacto", -12))
         if words or hook or options.channel_handle:
@@ -677,6 +724,9 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
                        "reason": f"Compressão falhou: {type(error).__name__}"}
     partial.replace(destination)
     return {"accents": list(accents.values()), "broll": [asset.name for asset, _ in inserts.values()],
+            "visual_background": {"mode": backdrop_mode, "shots": background_shots,
+                                  "asset": background.key if background and background_shots else None},
+            "visual_credits": list(visual_credits.values()),
             "transition": options.transition, "dissolves": blends, "sound_cues": cues, "compression": compression,
             "video_encoder": video_encoder[1],
             "jcuts": jcuts, "punches": punches, "run_gains_db": gains, "voice_polish": options.voice_polish,
@@ -761,7 +811,8 @@ def _process(source, folder, options, log, screening, staging_dir, on_review, re
             words = ([w for w in shared_words if w[0] < high and w[1] > low]
                      if shared_words is not None else [])
             if audio and shared_words is None and (cleanup.fillers or cleanup.repeats or cleanup.speech_gaps
-                                                   or options.hook or options.effects_model or options.broll_dir or options.broll_assets or screening
+                                                   or options.hook or options.effects_model or options.broll_dir or options.broll_assets
+                                                   or options.visual_library or screening
                                                    or (options.render and options.captions)):
                 log(f"Transcrevendo o trecho de {low:.1f}s a {high:.1f}s.")
                 words = transcribe(source, low, high, language=options.speech_language)
@@ -841,6 +892,7 @@ def _process(source, folder, options, log, screening, staging_dir, on_review, re
                                        words, model, threshold, prior)
                     verdict["duration"] = sum(b - a for a, b, _ in shots)
                     verdict["source"] = str(original_source)
+                    verdict["visual_credits"] = variant["finishing"]["visual_credits"]
                     verdict["studio_transcript"] = verdict.pop("review_transcript", " ".join(word for _, _, word in words)[:1450])
                     offset = prior.get("origin_offset", 0)
                     verdict["ranges"] = [(part["start"] + offset, part["end"] + offset) for part in entry["parts"]]

@@ -160,6 +160,12 @@ def enqueue(folder, candidate, media, verdict, transcript, hook, model):
     prepared = copy_from_model(model, transcript, hook) if media and not previous else {}
     title = (prepared.get("title") or hook or " ".join(transcript.split()[:9]) or "Corte da live").strip()
     description = (prepared.get("description") or " ".join(transcript.split()[:27]) or "Trecho da transmissão.").strip()
+    description = description[:450]
+    if media:
+        credits = [f"{item['label']} — {item['attribution']} ({item['license']}; trecho editado)"
+                   for item in verdict.get("visual_credits", []) if item.get("attribution")]
+        if credits:
+            description += "\n\nCréditos visuais\n" + "\n".join(credits)
     trends = topic_matches(folder, transcript) if media and not previous else []
     common = [word for word in dict.fromkeys(tokens(hook + " " + transcript)) if len(word) >= 4 and word not in STOPWORDS]
     tags = list(dict.fromkeys([*(match["tag"] for match in trends),
@@ -167,13 +173,13 @@ def enqueue(folder, candidate, media, verdict, transcript, hook, model):
     with closing(db_open(folder)) as db, db:
         db.execute("""INSERT OR IGNORE INTO clips (id,path,score,result,reason,title,description,tags,trends)
                       VALUES (?,?,?,?,?,?,?,?,?)""", (key, str(media.resolve()) if media else None, verdict["score"],
-                   verdict["status"], verdict["reason"], title[:95], description[:450], " ".join(tags),
+                   verdict["status"], verdict["reason"], title[:95], description, " ".join(tags),
                    json.dumps(trends, ensure_ascii=False)))
         db.execute("INSERT OR REPLACE INTO clip_reviews VALUES (?,?)",
                    (key, json.dumps({field: verdict[field] for field in
                                      ("reason","review_path","narrative_rules","action_rules","model",
                                       "semantic","visual","vision_model","speech_seconds","final_motion","threshold","studio_transcript",
-                                      "review_engine","transcript_source","origin_url","ranges") if field in verdict},
+                                      "review_engine","transcript_source","origin_url","ranges","visual_credits") if field in verdict},
                                     ensure_ascii=False)))
         if media:
             register_similarity(db, key, words, duration, visual, source, verdict.get("ranges", ()))

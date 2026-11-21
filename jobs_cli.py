@@ -16,6 +16,7 @@ STYLES = ("dynamic", "split", "reaction", "gamecam", "all")
 
 
 def prepare(request):
+    from broll_library import configured_visuals
     from editorial import Cleanup
     from engine import CAPTURE_HEIGHTS, Options, live_source
     from live_scout import ScoutSettings
@@ -78,6 +79,7 @@ def prepare(request):
     manual = parse_ranges(request.get("ranges") or "")
     if manual and (len(sources) != 1 or sources[0][1] != "file"):
         raise ValueError("Cortes manuais precisam de um único arquivo local.")
+    library, background, backdrop = configured_visuals(ROOT, request)
     opts = Options(style, "", "", "direito", bool(request.get("captions", True)), False, duration, count,
                    mode == "render", manual=manual, cleanup=Cleanup(True, True, True, True, 1.2, -40),
                    auto_face=True, look="shorts", polish=True, voice_polish=True, jcut_ms=130,
@@ -86,7 +88,8 @@ def prepare(request):
                    hook_text=request.get("hook_text") or "", effects_model=request.get("effects_model") or "",
                    smart_reframe=bool(request.get("smart_reframe", False)), speech_language=language,
                    target_shot_seconds=target_shot_seconds, full_hd=capture_height == 1080,
-                   precompress=bool(request.get("precompress", True)))
+                   precompress=bool(request.get("precompress", True)), visual_library=library,
+                   visual_background=background, background_asset=backdrop)
     scout = ScoutSettings(model=str(request.get("model") or ""), threshold=threshold, clip_seconds=duration,
                           review_final=bool(request.get("review", False)), continuous=minutes == 0,
                           catchup=bool(request.get("catchup", False)), performance=profile, live_poll_hours=poll_hours,

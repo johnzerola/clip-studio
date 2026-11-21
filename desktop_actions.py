@@ -30,6 +30,11 @@ def pick(data):
     try:
         if data.get("kind") == "folder":
             return {"path": filedialog.askdirectory(parent=window, initialdir=str(output_dir()), title="Salvar cortes em")}
+        if data.get("kind") == "visual-library":
+            return {"path": filedialog.askdirectory(parent=window, title="Pasta de memes e B-roll")}
+        if data.get("kind") == "visual-backdrop":
+            return {"path": filedialog.askopenfilename(parent=window, title="Imagem ou vídeo de fundo",
+                                                       filetypes=[("Mídia", "*.png *.jpg *.jpeg *.webp *.gif *.mp4 *.mov *.webm")])}
         if data.get("kind") == "preset":
             project = filedialog.askdirectory(parent=window, title="Projeto do AI Video Director")
             if not project:
@@ -51,7 +56,8 @@ def start_job(command, data):
     request = {name: data[name] for name in ("sources", "output", "seconds", "count", "minutes", "threshold",
                "speech_language", "acceleration", "precompress", "capture_height", "replay_height",
                "live_poll_hours", "catchup", "replay_count", "replay_period", "replay_only", "replay_gib",
-               "transcribe_recordings", "ranges", "style", "performance", "captions", "music", "mode", "review")
+               "transcribe_recordings", "ranges", "style", "performance", "captions", "music", "mode", "review",
+               "visual_mode", "visual_background", "visual_folder", "visual_backdrop_path")
                if name in data}
     request["output"] = request.get("output") or str(output_dir())
     request.update(smart_reframe=True, trim_inactive=True)
@@ -63,6 +69,7 @@ def start_job(command, data):
         tuned = make_request(profile, request["sources"][0], request["output"], request.get("ranges", ""))
         tuned.update(request)
         request = tuned
+        request["director_project"] = str(Path(data["project"]).resolve())
     if command == "live":
         request.update(review=True, replay_after_live=bool(data.get("replay_after_live", True)))
     if request.get("review"):

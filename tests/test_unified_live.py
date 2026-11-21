@@ -1,15 +1,47 @@
+import hashlib
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from engine import Options, layout_graph, layouts, render_clip
+from broll_library import configured_visuals, director_items
+from finishing import pick_broll
 from live_scout import TwitchPulse
 from posting_queue import enqueue, ranked
 from viral_rank import chat_bonus, has_chat_reaction, rank_chat
 
 
 class UnifiedLiveTest(unittest.TestCase):
+    def test_bundled_catalog_uses_only_manifest_media_with_matched_hashes(self):
+        root = Path(__file__).resolve().parents[1]
+        library, background, backdrop = configured_visuals(root, {"visual_mode": "local", "visual_background": "catalog"})
+        self.assertEqual({item.path.suffix for item in library}, {".gif", ".mp4"})
+        self.assertEqual(background, "catalog")
+        self.assertTrue(backdrop and all(item.is_current() for item in [*library, backdrop]))
+
+    def test_director_memes_follow_the_spoken_cue_and_skip_unapproved_media(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            asset = root / "reacao.png"
+            asset.write_bytes(b"visual")
+            item = {"relativePath": asset.name, "sha256": hashlib.sha256(b"visual").hexdigest(), "role": "meme",
+                    "rightsStatus": "project-authored", "sourceKind": "camera", "tags": ["cue:olha isso"]}
+            manifest = {"schemaVersion": 1, "assets": [item, dict(item, rightsStatus="user-provided-unverified"),
+                                                       dict(item, sourceKind="ai-generated"),
+                                                       dict(item, relativePath="../reacao.png")]}
+            (root / "media-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            approved, = director_items(root)
+            self.assertTrue(approved.is_current())
+            selected = ((approved.path, approved.cues),)
+            shots = [(0., 4., "face")]
+            words = [(1., 1.2, "olha"), (1.2, 1.5, "isso!")]
+            self.assertEqual(pick_broll("", shots, words, selected=selected, reaction=True), {0: (asset, 1.)})
+            self.assertEqual(pick_broll("", shots, words[:1], selected=selected, reaction=True), {})
+            asset.write_bytes(b"modified after approval")
+            self.assertFalse(approved.is_current())
+
     def test_reviewed_local_render_is_added_to_posting_queue(self):
         with (TemporaryDirectory() as directory,
               patch("posting_queue.topic_matches", return_value=[]),
