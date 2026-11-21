@@ -9,7 +9,7 @@ import runtime_profile as runtime
 
 def download(url, directory, kind, stop, *, window=None, limit=None, max_height=1440):
     from compression import metadata
-    from engine import capture_space, command
+    from engine import REPLAY_HEIGHTS, capture_space, command
 
     directory.mkdir(parents=True, exist_ok=True)
     suffix = "mp4" if kind == "video" else "mka"
@@ -23,8 +23,8 @@ def download(url, directory, kind, stop, *, window=None, limit=None, max_height=
         start, end = window
         if not 0 <= start < end <= start + 181:
             raise ValueError("Intervalo de vídeo inválido.")
-        if max_height not in (1080, 1440):
-            raise ValueError("Qualidade de replay deve ser Full HD ou 2K.")
+        if max_height not in REPLAY_HEIGHTS:
+            raise ValueError("Qualidade de replay deve ser Full HD, 2K ou 4K.")
         args += ["-f", f"bestvideo[height<={max_height}]+bestaudio/best[height<={max_height}]",
                  "-S", f"res:{max_height}",
                  "--download-sections", f"*{start:.3f}-{end:.3f}",

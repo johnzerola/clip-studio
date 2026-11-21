@@ -93,6 +93,12 @@ def list_jobs(limit=25):
                FROM jobs ORDER BY created DESC LIMIT ?""", (min(100, max(1, limit)),))]
 
 
+def job_activity(key):
+    with connect() as db:
+        return [tuple(row) for row in db.execute(
+            "SELECT source,state FROM source_activity WHERE job=? ORDER BY source", (key,))]
+
+
 def cancel(key):
     with connect() as db:
         expire(db)
@@ -210,12 +216,15 @@ def request_for(key):
     return json.loads(row["request"])
 
 
-def outputs(key):
-    row = get(key)
+def outputs(key, *, row=None):
+    row = row if row is not None else get(key)
     if not row["session"]:
         return {"id": key, "session": None, "clips": [], "plans": [], "transcripts": []}
-    folder = Path(row["session"])
+    folder = Path(row["session"]).resolve()
+    if not folder.is_relative_to(Path(row["output"]).resolve()) or not folder.is_dir():
+        return {"id": key, "session": None, "clips": [], "plans": [], "transcripts": []}
     clips = folder / "Clipes prontos"
-    return {"id": key, "session": str(folder), "clips": [str(path) for path in sorted(clips.rglob("clip_*.mp4"))],
+    return {"id": key, "session": str(folder), "clips": [str(path) for path in sorted(clips.rglob("clip_*.mp4"))
+                                                       if path.is_file() and path.resolve().is_relative_to(folder)],
             "plans": [str(path) for path in sorted(clips.rglob("cortes.json"))],
             "transcripts": [str(path) for path in sorted(clips.rglob("transcricao.txt"))]}

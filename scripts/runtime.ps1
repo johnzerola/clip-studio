@@ -5,7 +5,7 @@ function Add-InstalledToolPaths {
     $links = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links'
     $paths = @($links, (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python313'))
     if (Test-Path -LiteralPath $packages) {
-        $paths += @(Get-ChildItem "$packages\Gyan.FFmpeg_*\ffmpeg-*\bin" -Directory -ErrorAction SilentlyContinue |
+        $paths += @(Get-ChildItem "$packages\Gyan.FFmpeg_*\ffmpeg-*\bin", "$packages\BtbN.FFmpeg.*\ffmpeg-*\bin" -Directory -ErrorAction SilentlyContinue |
                     Sort-Object LastWriteTime -Descending | ForEach-Object FullName)
     }
     $paths += @($env:Path -split ';')

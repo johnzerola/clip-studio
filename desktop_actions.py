@@ -4,9 +4,12 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import sys
+from hashlib import sha256
 
-from job_registry import ROOT, ACTIVE, active_sources, cancel, list_jobs, outputs, submit
+from job_registry import ROOT, ACTIVE, cancel, connect, job_activity, list_jobs, outputs, submit
 
 
 def output_dir():
@@ -76,7 +79,17 @@ def start_job(command, data):
         models = installed_models() or set()
         model = next((item for item in MODELS if item in models), "")
         request.update(model=model, vision_model=model)
-    prepare(request)
+    sources, *_ = prepare(request)
+    if command == "live":
+        from engine import CAPTURE_RESERVE, capture_space
+
+        destination = Path(request["output"]).resolve()
+        volume = next(folder for folder in (destination, *destination.parents) if folder.is_dir())
+        if not capture_space(volume):
+            raise ValueError(f"Escolha uma unidade com pelo menos {CAPTURE_RESERVE // 1024**2} MiB livres para a captura.")
+        if request.get("performance", "leve") == "leve" and not request.get("replay_only"):
+            if sum(kind == "live" for _, kind, _ in sources) > 2:
+                raise ValueError("No modo Leve, selecione até duas lives. Use Equilibrado se quiser capturar mais canais.")
     row = submit(request, "Hook Spark / " + command)
     result = {"message": "Trabalho adicionado à fila V9.", "id": row["id"]}
     if profile:
@@ -135,7 +148,57 @@ def library(platform):
                 rows[item["id"]] = {key: item[key] for key in
                     ("id", "title", "description", "tags", "reason", "score", "weighted_score", "duplicate_of",
                      "vote", "feedback_points", "retention_points", "topic", "similar_title")}
-    return sorted(rows.values(), key=lambda row: -row["weighted_score"])[:30]
+    for key, path in exported_clips():
+        rows[key] = {"id": key, "title": path.stem.replace("_", " ").replace("-", " "),
+                     "score": None, "weighted_score": None, "vote": "", "duplicate_of": None}
+    return sorted(rows.values(), key=lambda row: -(row["weighted_score"] if row["weighted_score"] is not None else -1))[:60]
+
+
+def exported_clips():
+    from contextlib import closing
+    from posting_queue import db_open
+
+    for folder in folders():
+        if not (folder / "postagens.sqlite3").is_file():
+            continue
+        with closing(db_open(folder)) as db:
+            entries = db.execute("""SELECT e.path FROM clip_exports e WHERE NOT EXISTS
+                                  (SELECT 1 FROM clips c WHERE c.path=e.path AND c.result='ready')
+                                  ORDER BY rowid DESC LIMIT 60""").fetchall()
+        for (value,) in entries:
+            path = Path(value).resolve()
+            if path.is_relative_to(folder.resolve()) and path.is_file() and path.suffix.lower() == ".mp4":
+                yield "export-" + sha256(str(path).encode("utf-8")).hexdigest(), path
+
+
+def desktop_job(row):
+    result = outputs(row["id"], row=row)
+    detail = row["detail"]
+    if not detail and row["state"] == "completed" and not result["clips"]:
+        detail = "Plano ou prévia pronta" if result["plans"] and not row["origin"].endswith(" / live") else "Nenhum clipe exportado"
+    if row["origin"].endswith(" / live") and row["state"] in ("completed", "failed") and not result["clips"]:
+        with connect() as db:
+            messages = [item[0] for item in db.execute(
+                "SELECT line FROM events WHERE job=? ORDER BY seq DESC LIMIT 32", (row["id"],))]
+        if any("espaço insuficiente para captura" in line.casefold() or "Captura em pausa" in line for line in messages):
+            detail = "Nenhum clipe · captura pausada por espaço em disco"
+        elif any(line.startswith("Nenhum vídeo ao vivo") for line in messages):
+            detail = "Nenhum clipe · o provedor não entregou vídeo ao vivo"
+        elif any("descartado" in line.casefold() for line in messages):
+            detail = "Nenhum clipe aprovado pela triagem"
+    return {"id": row["id"], "state": row["state"], "detail": detail, "cancel": bool(row["cancel"]),
+            "output": row["output"], "clip_count": len(result["clips"]), "has_session": bool(result["session"]),
+            "activity": job_activity(row["id"]) if row["state"] == "running" else []}
+
+
+def open_brave(url):
+    relative = Path("BraveSoftware/Brave-Browser/Application/brave.exe")
+    roots = (os.getenv(name) for name in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"))
+    browser = next((Path(root) / relative for root in roots if root and (Path(root) / relative).is_file()), None)
+    browser = browser or shutil.which("brave.exe")
+    if not browser:
+        raise RuntimeError("Brave não encontrado. A captura local pode continuar normalmente.")
+    subprocess.Popen([str(browser), url], stdin=subprocess.DEVNULL, close_fds=True)
 
 
 def action(command, data):
@@ -171,21 +234,19 @@ def action(command, data):
         from storage_use import storage
         return storage(ROOT, folders())
     if command == "jobs":
-        rows = list_jobs(8)
-        return {"jobs": [{"id": row["id"], "state": row["state"], "detail": row["detail"], "cancel": bool(row["cancel"]),
-                          "output": row["output"], "activity": active_sources(row["output"]) if row["state"] == "running" else []}
-                         for row in rows], "output": str(output_dir())}
+        return {"jobs": [desktop_job(row) for row in list_jobs(8)], "output": str(output_dir())}
     if command == "cancel":
         cancel(data["id"])
         return {"message": "Pedido de cancelamento enviado."}
     if command == "open-live":
         from engine import live_source
         url, _ = live_source(data["url"].strip())
-        os.startfile(url)
-        return {"message": "Transmissão aberta no navegador."}
+        open_brave(url)
+        return {"message": "Link enviado ao Brave."}
     if command == "open":
         result = outputs(data["id"])
-        target = next((path for path in result["clips"] if Path(path).is_file()), result["session"])
+        target = result["session"] if data.get("folder") is True else next(
+            (path for path in result["clips"] if Path(path).is_file()), None)
         if not target or not Path(target).exists():
             raise ValueError("O trabalho ainda não tem resultado disponível.")
         os.startfile(target)
@@ -215,6 +276,11 @@ def action(command, data):
         return {"message": "Studio aberto no navegador."}
     if command == "library":
         return library(platform)
+    if command == "clip-preview" and str(data.get("id", "")).startswith("export-"):
+        for key, path in exported_clips():
+            if key == data["id"]:
+                return {"file": str(path)}
+        raise ValueError("Clipe exportado indisponível.")
     if command in ("clip-preview", "schedule", "review", "publish", "retention", "feedback"):
         from publish_state import browser_draft, review_info
         folder, path, row = clip_record(data["id"])

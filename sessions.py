@@ -115,9 +115,8 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                 report = process(path, folder, settings, log, screening=screening,
                                  staging_dir=path.parent if live_review else None, on_review=review if screening else None,
                                  recording=(scout.model, stop.is_set, weights)
-                                 if recording and scout.transcribe_recordings else None)
-                if report and settings.render:
-                    register_exports(output, folder.glob("clip_*.mp4"))
+                                 if recording and scout.transcribe_recordings else None,
+                                 on_export=lambda media: register_exports(output, (media,)))
                 if live_review and report:
                     variants = [(style, variant["screening"]) for clip in report["clips"]
                                 for style, variant in clip["variants"].items() if "screening" in variant]

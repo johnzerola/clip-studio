@@ -14,6 +14,39 @@ from viral_rank import chat_bonus, has_chat_reaction, rank_chat
 
 
 class UnifiedLiveTest(unittest.TestCase):
+    def test_light_capture_accepts_the_reported_disk_reserve(self):
+        from runtime_profile import PROFILES
+        from engine import capture_space, CAPTURE_RESERVE
+        from types import SimpleNamespace
+
+        with patch("runtime_profile.active", PROFILES["leve"]), patch("engine.shutil.disk_usage") as usage:
+            usage.return_value = SimpleNamespace(free=CAPTURE_RESERVE)
+            self.assertTrue(capture_space(Path.cwd()))
+            usage.return_value.free -= 1
+            self.assertFalse(capture_space(Path.cwd()))
+
+    def test_terminal_quality_limits_and_unrated_exports(self):
+        from desktop_actions import library, action
+        from engine import live_variant_order
+        from jobs_cli import prepare
+        from workspace_data import register_exports
+
+        self.assertTrue(live_variant_order(2160).startswith("2160p60,2160p,1440p60"))
+        self.assertNotIn("2160p", live_variant_order(1440))
+        _, options, _, _, _, _, scout = prepare({"sources": ["https://twitch.tv/example"],
+                                               "capture_height": 2160, "replay_height": 2160})
+        self.assertTrue(options.full_hd)
+        self.assertEqual((scout.capture_height, scout.replay_height), (2160, 2160))
+        with TemporaryDirectory() as directory:
+            folder = Path(directory)
+            clip = folder / "clip_01.mp4"
+            clip.write_bytes(b"completed export")
+            register_exports(folder, (clip,))
+            with patch("desktop_actions.folders", return_value=[folder]):
+                row, = library("YouTube")
+                self.assertIsNone(row["score"])
+                self.assertEqual(action("clip-preview", {"id": row["id"]}), {"file": str(clip.resolve())})
+
     def test_bundled_catalog_uses_only_manifest_media_with_matched_hashes(self):
         root = Path(__file__).resolve().parents[1]
         with TemporaryDirectory() as directory, patch.dict("os.environ", {"LOCALAPPDATA": directory}):

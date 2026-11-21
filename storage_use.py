@@ -42,7 +42,7 @@ def storage(root, outputs):
     profile = local / "Panel/Default"
     home = Path.home()
     hf = Path(os.getenv("HF_HOME") or home / ".cache/huggingface")
-    caches = [profile / "Cache", profile / "Code Cache", profile / "GPUCache", hf / "hub"]
+    caches = [profile / "Cache", profile / "Code Cache", profile / "GPUCache", hf / "hub", local / "Models"]
     return {"versions": [{"label": (item / "VERSION").read_text(encoding="utf-8").strip(), "name": item.name,
                           "active": item == root, **measured([item])} for item in sorted(installs)],
             "cache": measured(caches), "captures": measured(capture_dirs),

@@ -3,6 +3,7 @@ import array
 import csv
 import json
 import math
+import os
 import re
 import shutil
 import statistics
@@ -24,8 +25,9 @@ from compression import compress
 import runtime_profile as runtime
 
 WIDTH, HEIGHT = 720, 1280
-CAPTURE_HEIGHTS = (480, 720, 1080)
-LIVE_VARIANTS = "1080p60,1080p,936p60,936p,900p60,900p,864p60,864p,720p60,720p,540p,480p60,480p,360p,240p,160p".split(",")
+CAPTURE_HEIGHTS = (480, 720, 1080, 1440, 2160)
+REPLAY_HEIGHTS = (1080, 1440, 2160)
+LIVE_VARIANTS = "2160p60,2160p,1440p60,1440p,1080p60,1080p,936p60,936p,900p60,900p,864p60,864p,720p60,720p,540p,480p60,480p,360p,240p,160p".split(",")
 
 
 def live_variant_order(height):
@@ -374,10 +376,34 @@ def stamp(seconds):
     return f"{ticks // 360000}:{ticks // 6000 % 60:02}:{ticks // 100 % 60:02}.{ticks % 100:02}"
 
 
+def speech_model_path(model):
+    from faster_whisper.utils import download_model
+    from huggingface_hub.errors import LocalEntryNotFoundError
+
+    root = Path(__file__).resolve().parent
+    local = os.getenv("LOCALAPPDATA")
+    shared = Path(local) / "Codex Video" / "Models" if local else Path.home() / ".cache/codex-video/models"
+    candidates = [shared, root / "models"]
+    programs = Path(local) / "Programs" if local else root.parent
+    if programs.is_dir():
+        candidates.extend(folder / "models" for folder in programs.iterdir()
+                          if re.fullmatch(r"(?:Cortex Clip Studio |Codex Video )\d+\.\d+\.\d+|Clip-Studio-v\d+\.\d+\.\d+-\d+", folder.name)
+                          and (folder / "VERSION").is_file() and folder.resolve() == folder)
+    for cache in dict.fromkeys(candidates):
+        if not cache.is_dir():
+            continue
+        try:
+            path = Path(download_model(model, local_files_only=True, cache_dir=str(cache)))
+        except (LocalEntryNotFoundError, OSError):
+            continue
+        if all((path / name).is_file() for name in ("model.bin", "config.json", "tokenizer.json")):
+            return str(path)
+    return download_model(model, cache_dir=str(shared))
+
+
 def transcribe(source, start, end, model=None, *, language="auto"):
     import numpy as np
     from faster_whisper import WhisperModel
-    from huggingface_hub.errors import LocalEntryNotFoundError
 
     model = model or ("tiny" if runtime.active.low_priority else "base")
     pcm = command(FF + ["-threads", "1", "-ss", str(start), "-i", str(source), "-t", str(end - start),
@@ -399,13 +425,9 @@ def transcribe(source, start, end, model=None, *, language="auto"):
             MODELS.clear()
 
         def load(target):
-            config = {"device": target, "compute_type": "int8_float16" if target == "cuda" else "int8",
-                      "cpu_threads": threads, "num_workers": 1,
-                      "download_root": str(Path(__file__).parent / "models")}
-            try:
-                return WhisperModel(model, local_files_only=True, **config)
-            except LocalEntryNotFoundError:
-                return WhisperModel(model, **config)
+            return WhisperModel(speech_model_path(model), device=target,
+                                compute_type="int8_float16" if target == "cuda" else "int8",
+                                cpu_threads=threads, num_workers=1)
 
         def words(whisper):
             segments, _ = whisper.transcribe(samples, word_timestamps=True, vad_filter=True,
@@ -753,12 +775,12 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
             "music": Path(music).name if music else None}
 
 
-def process(source, folder, options, log, *, screening=None, staging_dir=None, on_review=None, recording=None):
+def process(source, folder, options, log, *, screening=None, staging_dir=None, on_review=None, recording=None, on_export=None):
     from compression import PRECOMPRESSION_BYTES, prepare_source
 
     original = source.resolve()
     if not options.render or not options.precompress or original.stat().st_size < PRECOMPRESSION_BYTES:
-        return _process(original, folder, options, log, screening, staging_dir, on_review, recording, original)
+        return _process(original, folder, options, log, screening, staging_dir, on_review, recording, original, on_export)
     folder.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(prefix=".edicao-", dir=folder) as directory:
         try:
@@ -766,10 +788,10 @@ def process(source, folder, options, log, *, screening=None, staging_dir=None, o
         except (OSError, ValueError, StopIteration, sp.SubprocessError):
             log("Não foi possível preparar uma cópia compacta. Editando o original.")
             editing = original
-        return _process(editing, folder, options, log, screening, staging_dir, on_review, recording, original)
+        return _process(editing, folder, options, log, screening, staging_dir, on_review, recording, original, on_export)
 
 
-def _process(source, folder, options, log, screening, staging_dir, on_review, recording, original_source):
+def _process(source, folder, options, log, screening, staging_dir, on_review, recording, original_source, on_export):
     from dataclasses import replace
 
     folder.mkdir(parents=True, exist_ok=True)
@@ -902,8 +924,7 @@ def _process(source, folder, options, log, screening, staging_dir, on_review, re
                 prepare_preview(original_source, folder, shots, words, cut_options, hook, screening)
                 log("Prévia pronta. Revise as inserções antes de exportar.")
                 continue
-            publish = (destination if screening is None else
-                       (staging_dir or folder) / f".review-{folder.name}-{destination.name}")
+            publish = (staging_dir or folder) / f".review-{folder.name}-{destination.name}"
             try:
                 variant["finishing"] = render_clip(source, publish, shots,
                                                    words if options.captions else [], cut_options,
@@ -931,12 +952,17 @@ def _process(source, folder, options, log, screening, staging_dir, on_review, re
                         log(f"Descartado depois da edição: {verdict['score']}/100 ({verdict['reason']}).")
                         continue
                     publish.replace(destination)
+                    if on_export:
+                        on_export(destination)
                     if on_review:
                         on_review(destination, destination, verdict, words, hook)
                     log(f"Aprovado depois da edição: {verdict['score']}/100 ({verdict.get('review_engine', 'regras_locais')}).")
+                else:
+                    publish.replace(destination)
+                    if on_export:
+                        on_export(destination)
             finally:
-                if screening is not None:
-                    publish.unlink(missing_ok=True)
+                publish.unlink(missing_ok=True)
             variant["output"] = destination.name
             if options.save_review:
                 try:
@@ -1099,8 +1125,7 @@ CAPTURE_RESERVE = 256 * 1024 * 1024
 
 
 def capture_space(folder):
-    reserve = 2 * 1024**3 if runtime.active.low_priority else CAPTURE_RESERVE
-    return shutil.disk_usage(folder).free >= reserve
+    return shutil.disk_usage(folder).free >= CAPTURE_RESERVE
 
 
 def capture(python, url, folder, minutes, schedule, stop, log, wait_minutes=0, segment_seconds=120,
@@ -1113,9 +1138,12 @@ def capture(python, url, folder, minutes, schedule, stop, log, wait_minutes=0, s
     attempt = 0
     while not stop.is_set():
         if not capture_space(folder):
-            log(f"Captura em pausa: mantenha 256 MiB livres no destino {folder}.")
+            reason = f"Espaço insuficiente para captura · mínimo de {CAPTURE_RESERVE // 1024**2} MiB livres"
+            log(f"{reason}: {folder}")
+            if on_state:
+                on_state(reason)
             if not continuous:
-                return
+                raise OSError(reason)
             stop.wait(45)
             continue
         if on_state:
@@ -1203,9 +1231,16 @@ def capture_once(python, url, folder, seconds, schedule, stop, log, segment_seco
                 continue
             path = folder / row[0]
             if path.exists():
-                found = True
                 minimum = 2 if segment_seconds <= 30 else 8
                 if path.stat().st_size and float(row[2]) - float(row[1]) >= minimum:
+                    if not found:
+                        from compression import metadata
+                        try:
+                            _, _, (width, height, _), _ = metadata(path)
+                            log(f"Qualidade da captura: {width} × {height}.")
+                        except (OSError, ValueError, KeyError, StopIteration, sp.SubprocessError):
+                            pass
+                    found = True
                     schedule(path, folder / path.stem)
                 elif discard_short:
                     try:
@@ -1216,7 +1251,7 @@ def capture_once(python, url, folder, seconds, schedule, stop, log, segment_seco
     host = urlparse(url).netloc.lower()
     direct = host in X_HOSTS | TIKTOK_HOSTS
     dvr = catchup and not direct
-    latency = (["--hls-live-restart", "--stream-segment-threads", str(runtime.active.dvr_threads)] if dvr else
+    latency = (["--hls-live-restart"] if dvr else
                ["--twitch-low-latency"] if host == "www.twitch.tv" else [])
     quality = runtime.active.quality
     if capture_height:
@@ -1228,8 +1263,10 @@ def capture_once(python, url, folder, seconds, schedule, stop, log, segment_seco
         log(f"Recuperando o início ainda disponível na janela pública de {url}.")
     with (folder / "captura.log").open("wb") as errors:
         sl = None if direct else sp.Popen(streamlink_cli(python) + ["--stdout", *latency,
+                                      "--stream-segment-threads", str(1 if runtime.active.low_priority else runtime.active.dvr_threads),
+                                      "--stream-segment-timeout", "15", "--stream-timeout", "25",
                                       "--loglevel", "warning", url, quality],
-                                     stdout=sp.PIPE, stderr=errors, **runtime.child_options())
+                                     stdout=sp.PIPE, stderr=errors, **runtime.child_options(hide=True))
         ff = None
         try:
             ff = sp.Popen((FF[:-1] if direct else FF) + input_args + ["-map", "0:v:0", "-map", "0:a:0?"]
@@ -1237,12 +1274,9 @@ def capture_once(python, url, folder, seconds, schedule, stop, log, segment_seco
                           + ["-c", "copy", "-f", "segment",
                                 "-segment_time", str(segment_seconds), "-reset_timestamps", "1",
                                 "-segment_list", index.name, "-segment_list_type", "csv",
-                                "live_%04d.ts"], stdin=sp.PIPE if direct else sl.stdout, cwd=folder, stderr=errors, **runtime.child_options())
+                                "live_%04d.ts"], stdin=sp.PIPE if direct else sl.stdout, cwd=folder, stderr=errors, **runtime.child_options(hide=True))
             if sl is not None:
                 sl.stdout.close()
-            log(f"Capturando {url}")
-            if on_state:
-                on_state("Ao vivo · capturando")
             last_data = time.monotonic()
             signature = None
             while ff.poll() is None and not stop.wait(2) and time.monotonic() < deadline:
@@ -1256,7 +1290,11 @@ def capture_once(python, url, folder, seconds, schedule, stop, log, segment_seco
                         current = (segment.name, segment.stat().st_size)
                     except FileNotFoundError:
                         current = None
-                    if current is not None and current != signature:
+                    if current is not None and current[1] > 0 and current != signature:
+                        if signature is None:
+                            log(f"Ao vivo · recebendo vídeo de {url}")
+                            if on_state:
+                                on_state("Ao vivo · capturando")
                         last_data, signature = time.monotonic(), current
                 if time.monotonic() - last_data > 65:
                     log(f"Sem dados de vídeo na conexão: {url}")

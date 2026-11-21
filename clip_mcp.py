@@ -29,9 +29,9 @@ class JobRequest(BaseModel):
     ranges: str = ""
     captions: bool = True
     speech_language: Literal["auto", "pt", "en", "es"] = "auto"
-    capture_height: Literal[480, 720, 1080] | None = None
+    capture_height: Literal[480, 720, 1080, 1440, 2160] | None = None
     replay_after_live: bool = False
-    replay_height: Literal[1080, 1440] = 1440
+    replay_height: Literal[1080, 1440, 2160] = 1440
     channel_handle: str = Field("", max_length=31)
     hook_text: str = Field("", max_length=64)
     effects_model: str = ""

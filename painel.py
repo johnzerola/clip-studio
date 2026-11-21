@@ -407,7 +407,7 @@ class Panel:
         ttk.Combobox(monitor_options, values=(0, 1, 2, 3), textvariable=self.live_poll_hours,
                      width=4, state="readonly").pack(side="left")
         ttk.Label(monitor_options, text="Qualidade").pack(side="left", padx=(12, 4))
-        ttk.Combobox(monitor_options, values=("Econômica · 480p", "HD · 720p", "Full HD · 1080p"),
+        ttk.Combobox(monitor_options, values=("Econômica · 480p", "HD · 720p", "Full HD · 1080p", "2K · 1440p", "4K · 2160p"),
                      textvariable=self.capture_quality, width=17, state="readonly").pack(side="left")
         ttk.Label(bank, text="Pico (dBFS)").pack(side="left", padx=(8, 0))
         ttk.Spinbox(bank, textvariable=self.sfx_peak, from_=-24, to=-3, width=4).pack(side="left", padx=4)
@@ -426,7 +426,7 @@ class Panel:
         replay_quality = ttk.Frame(auto_tab)
         replay_quality.grid(row=2, column=1, columnspan=4, sticky="w", pady=(10, 0))
         ttk.Label(replay_quality, text="Qualidade dos trechos (p)").pack(side="left")
-        ttk.Combobox(replay_quality, values=(1440, 1080), textvariable=self.replay_height,
+        ttk.Combobox(replay_quality, values=(2160, 1440, 1080), textvariable=self.replay_height,
                      width=6, state="readonly").pack(side="left", padx=6)
         archive = ttk.Frame(auto_tab)
         archive.grid(row=3, columnspan=5, sticky="w", pady=(4, 0))
@@ -823,7 +823,8 @@ class Panel:
                 raise ValueError("Escolha um arquivo de trilha existente.")
             if not -45 <= music_db <= -12:
                 raise ValueError("Use volume da trilha entre -45 e -12 dB.")
-            capture_height = {"Econômica · 480p": 480, "HD · 720p": 720, "Full HD · 1080p": 1080}.get(
+            capture_height = {"Econômica · 480p": 480, "HD · 720p": 720, "Full HD · 1080p": 1080,
+                              "2K · 1440p": 1440, "4K · 2160p": 2160}.get(
                 self.capture_quality.get(), 720)
             scout = ScoutSettings(self.scout_live.get(), self.scout_model.get().strip(),
                                   self.scout_threshold.get(), self.scout_cleanup.get(), duration,
@@ -859,7 +860,7 @@ class Panel:
                               broll_assets=broll_assets, contextual_broll=False, channel_handle=self.channel_handle.get(),
                               hook_text=self.hook_text.get(),
                               effects_model=self.scout_model.get().strip() if self.creative_effects.get() else "",
-                              smart_reframe=self.smart_reframe.get(), full_hd=bool(lives and capture_height == 1080),
+                              smart_reframe=self.smart_reframe.get(), full_hd=bool(lives and capture_height >= 1080),
                               precompress=self.precompress.get(),
                               auto_music=self.music_mode.get() == MUSIC_MODES[0],
                               keep_manual_edges=bool(manual and not lives and sources[0][1] == "file"

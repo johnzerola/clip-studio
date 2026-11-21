@@ -11,6 +11,7 @@ from pathlib import Path
 
 from job_registry import ROOT, TERMINAL, cancel, finish, get, list_jobs, outputs, request_for, submit, tracked_session
 from runtime_profile import PROFILES
+from engine import CAPTURE_HEIGHTS, REPLAY_HEIGHTS
 
 STYLES = ("dynamic", "split", "reaction", "gamecam", "all")
 
@@ -18,7 +19,7 @@ STYLES = ("dynamic", "split", "reaction", "gamecam", "all")
 def prepare(request):
     from broll_library import configured_visuals
     from editorial import Cleanup
-    from engine import CAPTURE_HEIGHTS, Options, live_source
+    from engine import Options, live_source
     from live_scout import ScoutSettings
 
     raw = request.get("sources")
@@ -45,10 +46,10 @@ def prepare(request):
     language = request.get("speech_language", "auto")
     capture_height = request.get("capture_height")
     replay_height = request.get("replay_height", 1440)
-    if replay_height not in (1080, 1440):
-        raise ValueError("Escolha replays em Full HD (1080p) ou 2K (1440p).")
+    if replay_height not in REPLAY_HEIGHTS:
+        raise ValueError("Escolha replays em Full HD (1080p), 2K (1440p) ou 4K (2160p).")
     if capture_height is not None and capture_height not in CAPTURE_HEIGHTS:
-        raise ValueError("Escolha captura em 480p, 720p ou 1080p.")
+        raise ValueError("Escolha captura em 480p, 720p, 1080p, 1440p ou 2160p.")
     modelar_reference = request.get("modelar_reference") or {}
     target_shot_seconds = float(modelar_reference.get("reference_shot_seconds", 3.0))
     poll_hours = int(request.get("live_poll_hours", 1))
@@ -89,7 +90,7 @@ def prepare(request):
                    contextual_broll=False, keep_manual_edges=bool(manual), channel_handle=request.get("channel_handle") or "",
                    hook_text=request.get("hook_text") or "", effects_model=request.get("effects_model") or "",
                    smart_reframe=bool(request.get("smart_reframe", False)), speech_language=language,
-                   target_shot_seconds=target_shot_seconds, full_hd=capture_height == 1080,
+                   target_shot_seconds=target_shot_seconds, full_hd=bool(capture_height and capture_height >= 1080),
                    precompress=bool(request.get("precompress", True)), visual_library=library,
                    visual_background=background, background_asset=backdrop, review_visuals=mode == "preview")
     scout = ScoutSettings(model=str(request.get("model") or ""), threshold=threshold, clip_seconds=duration,
@@ -107,9 +108,11 @@ def prepare(request):
 def ensure_media_path():
     if os.name == "nt" and not shutil.which("ffmpeg"):
         packages = Path(os.getenv("LOCALAPPDATA", "")) / "Microsoft" / "WinGet" / "Packages"
-        for binary in sorted(packages.glob("Gyan.FFmpeg_*/ffmpeg-*/bin/ffmpeg.exe"), reverse=True):
-            os.environ["PATH"] = str(binary.parent) + os.pathsep + os.environ.get("PATH", "")
-            break
+        for package in ("Gyan.FFmpeg_*", "BtbN.FFmpeg.*"):
+            for binary in sorted(packages.glob(f"{package}/ffmpeg-*/bin/ffmpeg.exe"), reverse=True):
+                if binary.with_name("ffprobe.exe").is_file():
+                    os.environ["PATH"] = str(binary.parent) + os.pathsep + os.environ.get("PATH", "")
+                    return
 
 
 def run_pending(key):
@@ -151,9 +154,9 @@ def main():
     create.add_argument("--ranges", default="")
     create.add_argument("--model", default="")
     create.add_argument("--speech-language", choices=("auto", "pt", "en", "es"), default="auto")
-    create.add_argument("--capture-height", type=int, choices=(480, 720, 1080))
+    create.add_argument("--capture-height", type=int, choices=CAPTURE_HEIGHTS)
     create.add_argument("--replay-after-live", action="store_true")
-    create.add_argument("--replay-height", type=int, choices=(1080, 1440), default=1440)
+    create.add_argument("--replay-height", type=int, choices=REPLAY_HEIGHTS, default=1440)
     create.add_argument("--live-poll-hours", choices=(0,1,2,3), default=1, type=int)
     create.add_argument("--transcribe-recordings", action="store_true")
     create.add_argument("--vision-model", default="")
