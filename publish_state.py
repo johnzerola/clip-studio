@@ -69,14 +69,17 @@ def start_upload(folder, clip, channel, when, meta, progress):
     return upload_info(folder, clip, channel)
 
 
-def browser_draft(folder, clip, platform, data=None):
+def browser_draft(folder, clip, platform, data=None, *, only_new=False):
     with closing(db_open(folder)) as db, db:
         db.execute("""CREATE TABLE IF NOT EXISTS browser_drafts (
             clip TEXT NOT NULL, platform TEXT NOT NULL, title TEXT, caption TEXT, planned TEXT,
             PRIMARY KEY(clip,platform))""")
         if data is not None:
-            db.execute("""INSERT OR REPLACE INTO browser_drafts VALUES (?,?,?,?,?)""",
-                       (clip, platform, data["title"], data["caption"], data["planned"]))
+            operation = "INSERT OR IGNORE" if only_new else "INSERT OR REPLACE"
+            saved = db.execute(f"{operation} INTO browser_drafts VALUES (?,?,?,?,?)",
+                               (clip, platform, data["title"], data["caption"], data["planned"]))
+            if only_new and not saved.rowcount:
+                raise ValueError("Já existe um rascunho deste clipe para esta rede.")
         row = db.execute("SELECT title,caption,planned FROM browser_drafts WHERE clip=? AND platform=?",
                          (clip, platform)).fetchone()
         return dict(row) if row else {}

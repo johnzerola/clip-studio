@@ -1,5 +1,4 @@
 """Optional local Ollama setup with an explicit model download choice."""
-import json
 import os
 from pathlib import Path
 import queue
@@ -7,20 +6,17 @@ import shutil
 import subprocess
 import threading
 import time
-import urllib.request
-
 import runtime_profile as runtime
+from ollama_connection import CACHE_SERVICE, DEFAULT, active_endpoint, service_models
 
 MODELS = ("qwen3.5:4b", "qwen3.5:2b")
 
 
 def installed_models():
-    client = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    try:
-        with client.open("http://127.0.0.1:11434/api/tags", timeout=2) as response:
-            return {item["name"] for item in json.load(response)["models"]}
-    except (OSError, KeyError, ValueError, TypeError):
+    ordinary, cached = service_models(DEFAULT), service_models(CACHE_SERVICE)
+    if ordinary is None and cached is None:
         return None
+    return (ordinary or set()) | (cached or set())
 
 
 def recommended_model():
@@ -32,6 +28,32 @@ def official_executable():
     found = shutil.which("ollama.exe")
     default = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/Ollama/ollama.exe"
     return found or (str(default) if default.is_file() else None)
+
+
+def start_model_service():
+    if installed_models() is not None:
+        return
+    executable = official_executable()
+    if not executable:
+        raise RuntimeError("Ollama não instalado. Escolha um modelo para instalar.")
+    env = dict(os.environ)
+    env.setdefault("OLLAMA_NUM_PARALLEL", "1")
+    env.setdefault("OLLAMA_MAX_LOADED_MODELS", "1")
+    cached = Path(env.get("LOCALAPPDATA", "")) / "OllamaLocal" / "models"
+    endpoint = DEFAULT
+    if (cached / "blobs").is_dir() and any((cached / directory).is_dir() for directory in ("manifests", "manifests-v2")):
+        # The regular service can answer on 11434 with its model volume read-only.
+        # Isolate Codex's available local cache from the existing service.
+        endpoint = CACHE_SERVICE
+        env["OLLAMA_MODELS"] = str(cached)
+    env["OLLAMA_HOST"] = endpoint.removeprefix("http://")
+    subprocess.Popen([executable, "serve"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, env=env, **runtime.child_options(hide=True))
+    for _ in range(25):
+        if service_models(endpoint) is not None:
+            return
+        time.sleep(1)
+    raise RuntimeError("O Ollama não respondeu. Abra o Ollama e volte a verificar.")
 
 
 def install_model(model, notify):
@@ -47,18 +69,15 @@ def install_model(model, notify):
         subprocess.run([winget, "install", "--exact", "--id", "Ollama.Ollama", "--source", "winget",
                         "--location", str(location), "--accept-source-agreements", "--accept-package-agreements"],
                        check=True, timeout=1800, **runtime.child_options(hide=True))
+    start_model_service()
+    if model in (installed_models() or set()):
+        return
     executable = official_executable()
-    if installed_models() is None and executable:
-        subprocess.Popen([executable, "serve"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, **runtime.child_options(hide=True))
-        for _ in range(15):
-            if installed_models() is not None:
-                break
-            time.sleep(1)
     if executable is None or installed_models() is None:
         raise RuntimeError("Abra o Ollama e volte a verificar a conexão.")
     notify(f"Baixando {model}. O tempo depende da conexão…")
-    subprocess.run([executable, "pull", model], check=True, timeout=7200, **runtime.child_options(hide=True))
+    pull_env = dict(os.environ, OLLAMA_HOST=active_endpoint().removeprefix("http://"))
+    subprocess.run([executable, "pull", model], env=pull_env, check=True, timeout=7200, **runtime.child_options(hide=True))
     if model not in (installed_models() or set()):
         raise RuntimeError("O modelo não apareceu na lista do Ollama.")
 

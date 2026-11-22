@@ -15,11 +15,36 @@ def modelar_reference(project: str, preset: str) -> dict:
     return load_profile(project, preset)
 
 
+@server.tool()
+def gta6_kit_info() -> dict:
+    """Busca os formatos e as perguntas de briefing do kit GTA 6 instalado no Modelar."""
+    from gta_kit import info
+    return info()
+
+
+@server.tool()
+def gta6_kit_draft(duration: int, format: str, topic: str, facts: str, handle: str = "") -> dict:
+    """Cria falas em PT-BR para revisão, usando fatos trazidos pelo usuário."""
+    from gta_kit import draft
+    return draft({"duration": duration, "format": format, "topic": topic, "facts": facts, "handle": handle})
+
+
+@server.tool()
+def gta6_kit_render(duration: int, format: str, topic: str, script: str, handle: str = "",
+                    gameplay: str = "", narration: str = "", sound: bool = False, music: bool = False) -> dict:
+    """Envia roteiro revisado à fila Modelar. Use uma fala por linha. Omissão de narração usa a voz PT-BR do Windows."""
+    from desktop_actions import output_dir
+    from gta_kit import queue
+    return queue({"duration": duration, "format": format, "topic": topic, "script": script, "handle": handle,
+                  "gameplay": gameplay, "narration": narration, "sound": sound, "music": music},
+                 output_dir(), "Modelar / Kit GTA 6")
+
+
 class JobRequest(BaseModel):
     sources: list[str] = Field(min_length=1, max_length=8)
     output: str | None = None
     mode: Literal["render", "plan"] = "render"
-    style: Literal["dynamic", "split", "reaction", "gamecam", "all"] = "dynamic"
+    style: Literal["dynamic", "split", "reaction", "gamecam", "all", "interview"] = "dynamic"
     performance: Literal["leve", "equilibrado"] = "leve"
     acceleration: Literal["auto", "cpu"] = "auto"
     precompress: bool = True
@@ -43,6 +68,7 @@ class JobRequest(BaseModel):
     transcribe_recordings: bool = False
     live_poll_hours: int = Field(1, ge=0, le=3)
     review: bool = False
+    auto_finalize: bool = False
     threshold: int = Field(60, ge=20, le=95)
     catchup: bool = False
 

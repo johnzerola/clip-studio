@@ -55,8 +55,24 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
         log(f"Sessão: {batch}")
         profile = configure(scout.performance, scout.acceleration)
         workers = min(workers, profile.max_renders)
+        if scout.auto_finalize:
+            from ai_setup import MODELS, installed_models, start_model_service
+            models = installed_models()
+            if models is None:
+                log("Ativando o Ollama para a revisão automática.")
+                start_model_service()
+                models = installed_models()
+            names = (scout.vision_model, *MODELS)
+            model = next((name for name in names if name and name in (models or ())), "")
+            if not model:
+                raise RuntimeError("A revisão automática precisa de Qwen com visão. Confira o modelo em Integrações.")
+            scout = replace(scout, model=scout.model or model, vision_model=model)
+            options = replace(options, effects_model=options.effects_model or model)
+            log(f"Revisão automática com {model} · até uma correção por corte antes de salvar.")
         from workspace_data import editorial_weights, register_exports
         weights = editorial_weights(output)
+        from viral_knowledge import load_history
+        load_history(output)
         available = shutil.disk_usage(output).free / 1024**3
         log(f"Modo {profile.label} · até {workers} render(es) simultâneo(s) · {available:.1f} GiB livres.")
         if profile.low_priority:
@@ -97,14 +113,16 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
             def render_job(path, folder, settings, release_source, screening, live_review=False, recording=False):
                 lower_worker_priority()
                 log(f"Edição iniciada: {path.name}.")
+                if screening and scout.auto_finalize:
+                    model, threshold, prior = screening
+                    screening = (model, threshold, dict(prior, auto_finalize=True, stop=stop.is_set,
+                                                        protect_edges=settings.keep_manual_edges))
 
                 def review(candidate, media, verdict, words, hook):
                     clip_id = enqueue(output, candidate, media, verdict,
                                       verdict.get("studio_transcript", " ".join(word for _, _, word in words)),
                                       hook, screening[0])
-                    model_ok = (verdict.get("visual") if scout.vision_model else
-                                verdict.get("semantic") if scout.model else True)
-                    if media and scout.autopilot and model_ok and not stop.is_set():
+                    if media and scout.autopilot and verdict.get("recommendation") == "recommended" and not stop.is_set():
                         if upload_slots.acquire(blocking=False):
                             pending = sending.submit(send_approved, clip_id)
                             pending.add_done_callback(lambda _: upload_slots.release())
@@ -158,17 +176,34 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
 
             def vod(url, folder, result, settings):
                 from recording_analysis import select
-                from replay_media import download
+                from replay_media import download, gameplay_candidates, replay_duration
+                from vendor.openshorts.twitch_signals import fetch_viewer_clips, parse_vod_id
 
                 folder.mkdir(parents=True, exist_ok=True)
                 result.mkdir(parents=True, exist_ok=True)
                 try:
                     with TemporaryDirectory(prefix="replay-audio-", dir=folder) as audio_stage:
                         log(f"Baixando apenas a faixa de áudio da gravação: {url}")
-                        audio, duration = download(url, Path(audio_stage), "audio", stop,
-                                                   limit=scout.replay_gib * 1024**3)
-                        periods, _, picks = analysis.submit(select, audio, result, duration, None,
-                                                            settings, scout.model, stop.is_set, weights, log).result()
+                        vod_id = parse_vod_id(url)
+                        viewer_clips = fetch_viewer_clips(vod_id, timeout=4)[:20] if vod_id else ()
+                        if viewer_clips:
+                            log(f"Twitch · {len(viewer_clips)} clipes de espectadores usados como sinais de triagem.")
+                        try:
+                            audio, duration = download(url, Path(audio_stage), "audio", stop,
+                                                       limit=scout.replay_gib * 1024**3)
+                        except RuntimeError:
+                            audio, duration = None, replay_duration(url)
+                        if audio:
+                            periods, _, picks = analysis.submit(select, audio, result, duration, None,
+                                                                settings, scout.model, stop.is_set, weights, log,
+                                                                viewer_clips).result()
+                        else:
+                            periods, picks = [], []
+                        if not picks:
+                            log("Replay sem candidato pela fala. Buscando ação em até três amostras leves.")
+                            picks = analysis.submit(gameplay_candidates, url, folder, stop,
+                                                    duration, settings, log).result()
+                            periods = [[(pick["start"], pick["end"])] for pick in picks]
                     (result / "selecao-replay.json").write_text(
                         json.dumps({"source": url, "duration": duration, "candidates": picks},
                                    ensure_ascii=False, indent=2), encoding="utf-8")
@@ -182,17 +217,19 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                         if pick["av_score"] < minimum:
                             log(f"Trecho {index}: {pick['av_score']}/100 ficou abaixo da triagem de replay ({minimum}).")
                             continue
-                        log(f"Baixando somente {low:.1f}–{high:.1f} s em até {scout.replay_height}p.")
+                        padding = min(5., max(0., (180. - (high - low)) / 2)) if scout.auto_finalize else 0.
+                        download_low, download_high = max(0., low - padding), min(duration, high + padding)
+                        log(f"Baixando somente {download_low:.1f}–{download_high:.1f} s em até {scout.replay_height}p.")
                         with TemporaryDirectory(prefix="replay-clip-", dir=folder) as clip_stage:
                             path, size = download(url, Path(clip_stage), "video", stop,
-                                                  window=(low, high), limit=1024**3, max_height=scout.replay_height)
+                                                  window=(download_low, download_high), limit=1024**3, max_height=scout.replay_height)
                             log(f"Trecho {index} recebido em {size[0]} × {size[1]}.")
-                            local_duration = min(high - low, probe(path)[0])
-                            clip_options = replace(settings, count=1, manual=((0., local_duration),),
+                            local_end = min(high - download_low, probe(path)[0])
+                            clip_options = replace(settings, count=1, manual=((low - download_low, local_end),),
                                                    precompress=settings.precompress and not profile.low_priority,
                                                    full_hd=max(size) >= 1920, save_review=False, trim_inactive=True)
                             prior = {"vision_model": scout.vision_model, "origin_url": url,
-                                     "origin_offset": low, "speech_language": settings.speech_language}
+                                     "origin_offset": download_low, "speech_language": settings.speech_language}
                             screening = (scout.model, scout.threshold, prior) if scout.review_final else None
                             analysis.submit(render_job, path, result / f"Trecho-{index:02d}", clip_options, False,
                                             screening).result()

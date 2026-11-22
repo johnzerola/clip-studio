@@ -4,10 +4,11 @@ import json
 import math
 
 from viral_rank import candidates, judge_local
+from replay_selection import detail
 from vendor.openshorts.clip_selection import dedupe_overlapping
 
 
-def select(source, folder, total, signals, options, model, stop, weights, log):
+def select(source, folder, total, signals, options, model, stop, weights, log, viewer_clips=()):
     from engine import inspect, stamp, transcribe
     from workspace_data import topic
 
@@ -55,14 +56,27 @@ def select(source, folder, total, signals, options, model, stop, weights, log):
                     local = [(at - offset, audio, motion) for at, audio, motion in signals if offset <= at < end]
                 picks = candidates([(a-offset, b-offset, word) for a,b,word in words],
                                    local, end-offset, options.duration, start-offset)
+                for moment in viewer_clips:
+                    peak = moment["start"]
+                    if start <= peak < end:
+                        low = max(offset, peak - 4)
+                        high = min(total, low + options.duration)
+                        if high - low >= 8:
+                            picks.append({"start": low - offset, "end": high - offset,
+                                          "transcript": " ".join(word for a, b, word in words if low <= a < high),
+                                          "features": {"motion": 0., "viewer_clips": 1,
+                                                       "viewer_views": moment["views"]},
+                                          "av_score": min(62, 46 + round(math.log2(1 + moment["views"])))})
                 if audio_only:
                     for pick in picks:
                         pick["features"]["selection_source"] = "audio_transcript"
                 for pick in sorted(picks, key=lambda row: row["av_score"], reverse=True)[:3]:
-                    if not pick["transcript"] and pick["features"]["motion"] < 1.8:
+                    if not pick["transcript"] and pick["features"]["motion"] < 1.8 and not pick["features"].get("viewer_clips"):
                         continue
                     pick["start"] += offset
                     pick["end"] += offset
+                    if model and pick["transcript"]:
+                        pick["word_context"] = [w for w in words if pick["start"] - 4 <= w[0] < pick["end"] + 4][:150]
                     bias = weights.get(topic(pick["transcript"]), 0)
                     pick["av_score"] = max(0, min(100, pick["av_score"] + bias))
                     item = (pick["av_score"], serial, pick)
@@ -83,11 +97,19 @@ def select(source, folder, total, signals, options, model, stop, weights, log):
     for pick in distinct[:min(4, options.count + 1)]:
         if stop():
             raise InterruptedError("Análise cancelada.")
-        semantic = judge_local(model, pick["transcript"], pick["features"])
+        refined = detail(model, pick, options.duration, total)
+        if refined:
+            pick.update(refined)
+            pick["transcript"] = " ".join(word for a, b, word in pick["word_context"]
+                                         if a >= pick["start"] and b <= pick["end"])
+        semantic = refined["semantic"] if refined else judge_local(model, pick["transcript"], pick["features"])
         if semantic:
             pick["semantic"] = semantic
             pick["av_score"] = round(.55 * pick["av_score"] + .45 * semantic["score"])
-    ranked = sorted(distinct, key=lambda row: row["av_score"], reverse=True)
+    for pick in distinct:
+        pick.pop("word_context", None)
+        pick["predicted_score"] = pick["av_score"]
+    ranked = sorted(dedupe_overlapping(distinct), key=lambda row: row["av_score"], reverse=True)
     shortlist = ranked[:options.count]
     applied = sum("semantic" in pick for pick in distinct)
     log(f"Ollama · {applied} candidato(s) avaliados por gancho, contexto, progressão e desfecho."

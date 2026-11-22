@@ -83,7 +83,8 @@ def copy_from_model(model, transcript, hook):
                                 {"role": "user", "content": "Escreva um título específico e uma descrição de uma frase "
                                  "sobre o que aconteceu nesta fala. Responda somente JSON. Dados do corte: "
                                  + json.dumps({"fala": transcript[:1450], "gancho": hook}, ensure_ascii=False)}]}
-        request = urllib.request.Request("http://127.0.0.1:11434/api/chat", json.dumps(payload).encode(),
+        from ollama_connection import active_endpoint
+        request = urllib.request.Request(active_endpoint(model) + "/api/chat", json.dumps(payload).encode(),
                                          {"Content-Type": "application/json"})
         with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=50) as resp:
             parsed = json.loads(json.load(resp)["message"]["content"])
@@ -181,19 +182,37 @@ def enqueue(folder, candidate, media, verdict, transcript, hook, model):
                    (key, json.dumps({field: verdict[field] for field in
                                      ("reason","review_path","narrative_rules","action_rules","model",
                                       "semantic","visual","vision_model","speech_seconds","final_motion","threshold","studio_transcript",
-                                      "review_engine","transcript_source","origin_url","ranges","visual_credits") if field in verdict},
+                                      "review_engine","transcript_source","origin_url","ranges","visual_credits",
+                                      "source_size","output_size","edit_model","editorial","recommendation","attempts") if field in verdict},
                                     ensure_ascii=False)))
         if media:
             register_similarity(db, key, words, duration, visual, source, verdict.get("ranges", ()))
     return key
 
 
+def save_editorial_review(folder, clip, verdict):
+    fields = ("editorial", "recommendation", "review_engine", "review_transcript", "transcript_source", "vision_model",
+              "reason", "visual", "semantic", "technical_ok", "threshold")
+    with closing(db_open(folder)) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("SELECT detail FROM clip_reviews WHERE clip=?", (clip,)).fetchone()
+        detail = json.loads(row["detail"]) if row else {}
+        detail.update({key: verdict[key] for key in fields if key in verdict})
+        if verdict.get("review_transcript"):
+            detail["studio_transcript"] = verdict["review_transcript"]
+        db.execute("INSERT OR REPLACE INTO clip_reviews VALUES (?,?)",
+                   (clip, json.dumps(detail, ensure_ascii=False)))
+        db.execute("UPDATE clips SET score=?, reason=? WHERE id=?", (verdict["score"], verdict["reason"], clip))
+
+
 def ranked(folder, limit=250, *, platform=None):
     with closing(db_open(folder)) as db, db:
-        candidates = db.execute("""SELECT c.*, s.duplicate_of, parent.title AS similar_title, parent.path AS similar_path
+        candidates = db.execute("""SELECT c.*, s.duplicate_of, parent.title AS similar_title, parent.path AS similar_path,
+                                   CASE WHEN json_valid(r.detail) THEN json_extract(r.detail, '$.recommendation') END AS recommendation
                                 FROM clips c LEFT JOIN clip_signatures s ON c.id=s.clip
                                 LEFT JOIN clips parent ON s.duplicate_of=parent.id
-                                ORDER BY c.result='ready' DESC, c.score DESC, c.updated DESC LIMIT ?""",
+                                LEFT JOIN clip_reviews r ON r.clip=c.id
+                                ORDER BY c.result='ready' DESC, recommendation='recommended' DESC, c.score DESC, c.updated DESC LIMIT ?""",
                                 (limit,)).fetchall()
         if platform is None:
             return candidates
@@ -204,13 +223,28 @@ def ranked(folder, limit=250, *, platform=None):
         benefits = {theme: observed(db, platform, theme) for theme in set(themes.values())}
         votes = dict(db.execute("SELECT clip,vote FROM editorial_feedback WHERE platform=?", (platform,)))
         weights = feedback_points(db, platform)
-        rows = [dict(row, topic=themes[row["id"]], topic_points=benefits[themes[row["id"]]],
+        rows = [dict(row, recommendation=row["recommendation"] or "pending",
+                     topic=themes[row["id"]], topic_points=benefits[themes[row["id"]]],
                      vote=votes.get(row["id"], ""), feedback_points=weights.get(themes[row["id"]], 0),
                      retention_points=changes.get(row["score"] // 10, 0) + benefits[themes[row["id"]]],
                      weighted_score=max(0, min(100, row["score"] + changes.get(row["score"] // 10, 0)
                                                + benefits[themes[row["id"]]] + weights.get(themes[row["id"]], 0)))
                      if row["result"] == "ready" else row["score"]) for row in candidates]
-        return sorted(rows, key=lambda row: (row["result"] != "ready", -row["weighted_score"]))
+        rows.sort(key=lambda row: (row["result"] != "ready", -row["weighted_score"]))
+        links = {row["id"]: row["duplicate_of"] for row in rows if row["duplicate_of"]}
+        seen = set()
+        for row in rows:
+            if row["recommendation"] != "recommended":
+                continue
+            group = row["id"]
+            visited = set()
+            while group in links and group not in visited:
+                visited.add(group)
+                group = links[group]
+            if group in seen:
+                row["recommendation"] = "similar"
+            seen.add(group)
+        return rows
 
 
 def feedback(folder, clip, platform, vote):

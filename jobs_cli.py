@@ -13,7 +13,7 @@ from job_registry import ROOT, TERMINAL, cancel, finish, get, list_jobs, outputs
 from runtime_profile import PROFILES
 from engine import CAPTURE_HEIGHTS, REPLAY_HEIGHTS
 
-STYLES = ("dynamic", "split", "reaction", "gamecam", "all")
+STYLES = ("dynamic", "split", "reaction", "gamecam", "all", "interview")
 
 
 def prepare(request):
@@ -51,7 +51,8 @@ def prepare(request):
     if capture_height is not None and capture_height not in CAPTURE_HEIGHTS:
         raise ValueError("Escolha captura em 480p, 720p, 1080p, 1440p ou 2160p.")
     modelar_reference = request.get("modelar_reference") or {}
-    target_shot_seconds = float(modelar_reference.get("reference_shot_seconds", 3.0))
+    gta_style = request.get("gta_kit_style") is True
+    target_shot_seconds = float(modelar_reference.get("reference_shot_seconds", 2.8 if gta_style else 3.0))
     poll_hours = int(request.get("live_poll_hours", 1))
     if poll_hours not in (0, 1, 2, 3):
         raise ValueError("Escolha uma frequência de 0, 1, 2 ou 3 horas.")
@@ -85,7 +86,7 @@ def prepare(request):
     library, background, backdrop = configured_visuals(ROOT, request)
     opts = Options(style, "", "", "direito", bool(request.get("captions", True)), False, duration, count,
                    mode != "plan", manual=manual, cleanup=Cleanup(True, True, True, True, 1.2, -40),
-                   auto_face=True, look="shorts", polish=True, voice_polish=True, jcut_ms=130,
+                   auto_face=True, look="gta-kit" if gta_style else "shorts", polish=True, voice_polish=True, jcut_ms=130,
                    transition="v9", compression="compacto", auto_music=bool(request.get("music", True)),
                    contextual_broll=False, keep_manual_edges=bool(manual), channel_handle=request.get("channel_handle") or "",
                    hook_text=request.get("hook_text") or "", effects_model=request.get("effects_model") or "",
@@ -95,15 +96,16 @@ def prepare(request):
                                        if key in modelar_reference} or None,
                    precompress=bool(request.get("precompress", True)), visual_library=library,
                    visual_background=background, background_asset=backdrop, review_visuals=mode == "preview")
+    auto_finalize = bool(request.get("auto_finalize", False)) and mode == "render"
     scout = ScoutSettings(model=str(request.get("model") or ""), threshold=threshold, clip_seconds=duration,
-                          review_final=bool(request.get("review", False)), continuous=minutes == 0,
+                          review_final=auto_finalize or bool(request.get("review", False)), continuous=minutes == 0,
                           catchup=bool(request.get("catchup", False)), performance=profile, live_poll_hours=poll_hours,
                           replay_count=replay_count, replay_period=replay_period, replay_only=replay_only, replay_gib=replay_gib,
                           trim_inactive=bool(request.get("trim_inactive", True)),
                           transcribe_recordings=bool(request.get("transcribe_recordings", False)),
                           vision_model=str(request.get("vision_model") or ""), speech_language=language,
                           capture_height=capture_height, replay_after_live=bool(request.get("replay_after_live", False)),
-                          replay_height=replay_height, acceleration=acceleration)
+                          replay_height=replay_height, acceleration=acceleration, auto_finalize=auto_finalize)
     return sources, opts, minutes, 1, out, 0, scout
 
 
@@ -126,6 +128,10 @@ def run_pending(key):
         ensure_media_path()
         stop = threading.Event()
         signal.signal(signal.SIGINT, lambda *_: stop.set())
+        if request.get("gta_kit"):
+            from gta_kit import render
+            from job_registry import start
+            return start(key, lambda event, session: render(request, event, session, stop), stop, lambda _line: None)
         if request.get("visual_review"):
             from job_registry import start
             from visual_review import run_review
@@ -158,6 +164,8 @@ def main():
     create.add_argument("--speech-language", choices=("auto", "pt", "en", "es"), default="auto")
     create.add_argument("--capture-height", type=int, choices=CAPTURE_HEIGHTS)
     create.add_argument("--replay-after-live", action="store_true")
+    create.add_argument("--auto-finalize", action="store_true",
+                        help="Revisar, tentar um ajuste quando possível e salvar só cortes aprovados pela IA.")
     create.add_argument("--replay-height", type=int, choices=REPLAY_HEIGHTS, default=1440)
     create.add_argument("--live-poll-hours", choices=(0,1,2,3), default=1, type=int)
     create.add_argument("--transcribe-recordings", action="store_true")

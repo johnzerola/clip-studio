@@ -10,7 +10,7 @@ import statistics
 import subprocess as sp
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -156,7 +156,7 @@ def encoder(*, software_only=False, quality=22):
     raise RuntimeError("O FFmpeg precisa do encoder libx264 ou libopenh264.")
 
 
-def probe(source, *, timeout=None):
+def probe(source, *, timeout=None, include_size=False):
     data = json.loads(command(["ffprobe", "-v", "error", "-show_streams", "-show_format",
                                "-of", "json", str(source)], timeout=timeout))
     video = next((s for s in data["streams"] if s["codec_type"] == "video"), None)
@@ -165,7 +165,10 @@ def probe(source, *, timeout=None):
     duration = float(data["format"]["duration"])
     if not math.isfinite(duration) or duration <= 0:
         raise ValueError("Duração da fonte indisponível.")
-    return duration, any(s["codec_type"] == "audio" for s in data["streams"])
+    audio = any(s["codec_type"] == "audio" for s in data["streams"])
+    if include_size:
+        return duration, audio, (int(video.get("width") or 0), int(video.get("height") or 0))
+    return duration, audio
 
 
 def media_for_seeking(source, remuxed):
@@ -335,7 +338,7 @@ def layout_graph(style, options, focus_x=None):
         return (f"[0:v]split=2[f][g];{game_canvas('[g]', '[main]')};"
                 f"[f]{camera}[cam];[main][cam]overlay={x}:{scale_units(190)}[base]")
     if style == "split":
-        if options.look == "shorts":
+        if options.look in ("shorts", "gta-kit"):
             return (f"[0:v]split=2[f][g];[f]{fill(options.face, scale_units(500))}[top];"
                     f"[g]{fill(options.game, scale_units(780))}[bottom];[top][bottom]vstack[base]")
         return (f"[0:v]split=2[f][g];[f]{fit(options.face, canvas_width, scale_units(440))}[top];"
@@ -352,6 +355,10 @@ def layout_graph(style, options, focus_x=None):
 
 
 def layouts(signals, start, end, options, words=(), signal_offset=0):
+    if options.style == "interview":
+        count = max(1, math.ceil((end - start) / 4.5))
+        cuts = [start + (end - start) * i / count for i in range(count)] + [end]
+        return [(a, b, "interview") for a, b in zip(cuts, cuts[1:])]
     if not options.face:
         return [(start, end, "game")]
     if options.style != "dynamic":
@@ -388,7 +395,7 @@ def layouts(signals, start, end, options, words=(), signal_offset=0):
             style = "face"
         elif motion >= 1.35 and motion > max(cam, audio) * 1.25:
             style = "game"
-        elif motion >= (1.18 if options.look == "shorts" else 1.0) and cam < 1.15:
+        elif motion >= (1.18 if options.look in ("shorts", "gta-kit") else 1.0) and cam < 1.15:
             style = "gamecam"
         else:
             style = "split"
@@ -400,12 +407,31 @@ def layouts(signals, start, end, options, words=(), signal_offset=0):
     return segments
 
 
+def direct_shots(shots, framing, close_allowed):
+    directed = []
+    for start, end, style in shots:
+        if style != "game":
+            if framing == "jogo":
+                style = "gamecam"
+            elif framing == "juntos" and style == "face":
+                style = "split"
+            elif framing == "reacao" and style == "split" and close_allowed:
+                style = "reaction"
+            if not close_allowed and style in {"face", "reaction"}:
+                style = "gamecam"
+        if directed and directed[-1][2] == style and abs(directed[-1][1] - start) < .001:
+            directed[-1] = (directed[-1][0], end, style)
+        else:
+            directed.append((start, end, style))
+    return directed
+
+
 def stamp(seconds):
     ticks = max(0, round(seconds * 100))
     return f"{ticks // 360000}:{ticks // 6000 % 60:02}:{ticks // 100 % 60:02}.{ticks % 100:02}"
 
 
-def speech_model_path(model):
+def speech_model_path(model, *, download=True):
     from faster_whisper.utils import download_model
     from huggingface_hub.errors import LocalEntryNotFoundError
 
@@ -427,7 +453,7 @@ def speech_model_path(model):
             continue
         if all((path / name).is_file() for name in ("model.bin", "config.json", "tokenizer.json")):
             return str(path)
-    return download_model(model, cache_dir=str(shared))
+    return download_model(model, cache_dir=str(shared)) if download else None
 
 
 def transcribe(source, start, end, model=None, *, language="auto"):
@@ -522,7 +548,9 @@ def opening_phrase(words, start):
 
 
 def subtitles(path, words, start, end, style, look="classic", hook="", opening=None, *, channel_handle=""):
-    y = (562 if look == "shorts" else 495) if style == "split" else 1035
+    gta_style = look == "gta-kit"
+    shorts = look in ("shorts", "gta-kit")
+    y = (562 if shorts else 495) if style == "split" else 1035
     head = """[Script Info]
 ScriptType: v4.00+
 PlayResX: 720
@@ -541,10 +569,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                      + r"{\pos(360,118)}" + ass_text(channel_handle))
     if hook and opening is not None and start < opening + 2.7 and end > opening:
         at, until = max(start, opening), min(end, opening + 2.7)
-        hook_y = 415 if style == "split" else 280
+        # Keep the hook away from the face panel, webcam inset and caption band.
+        hook_y = {"split": 710, "face": 890, "reaction": 890, "gamecam": 460}.get(style, 280)
         lines.append(f"Dialogue: 1,{stamp(at-start)},{stamp(until-start)},Hook,,0,0,0,,"
                      + r"{\pos(360," + str(hook_y) + ")}" + ass_text(hook))
-    groups = list(caption_groups(words))
+    if gta_style:
+        head = head.replace("Caption,Arial,48", "Caption,Arial Black,49")
+    groups = list(caption_groups(words, max_words=3, max_chars=21) if gta_style else caption_groups(words))
     for index, group in enumerate(groups):
         if group[0][0] >= end or group[-1][1] + .13 <= start:
             continue
@@ -558,8 +589,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             limit, at = min(end, next_word, b + .19), max(start, a)
             if stamp(limit-start) == stamp(at-start) or limit <= at:
                 continue
-            phrase = " ".join((r"{\1c&H00DEFF&}" if k == j else r"{\1c&HFFFFFF&}")
-                              + (ass_text(word).upper() if look == "shorts" else ass_text(word))
+            accent = r"{\1c&H0AD6FF&}" if gta_style else r"{\1c&H00DEFF&}"
+            phrase = " ".join((accent if k == j else r"{\1c&HFFFFFF&}")
+                              + (ass_text(word).upper() if shorts else ass_text(word))
                               for k, (_, _, word) in enumerate(group))
             lines.append(f"Dialogue: 0,{stamp(at-start)},{stamp(limit-start)},Caption,,0,0,0,,"
                          + r"{\pos(360," + str(y) + ")}" + phrase)
@@ -645,10 +677,15 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
         frame_counts.append(frames)
         name = f"p{len(pieces):03}.mp4"
         focus_x = None
-        if options.smart_reframe and style == "game" and not options.face and not options.game:
+        layout_options = options
+        if style == "interview":
+            from interview import focus
+            focus_x = focus(source, start, end)
+            layout_options = replace(options, game="", smart_reframe=False)
+        elif options.smart_reframe and style == "game" and not options.face and not options.game:
             from creative_studio import shot_focus
             focus_x = shot_focus(source, start, end)
-        graph = layout_graph(style, options, focus_x)
+        graph = layout_graph(style, layout_options, focus_x)
         layer = "[base]"
         inputs = []
         opening_punch = index == 0 and (style == "face" or (style == "split" and hook))
@@ -833,14 +870,23 @@ def _process(source, folder, options, log, screening, staging_dir, on_review, re
 
     folder.mkdir(parents=True, exist_ok=True)
     source = media_for_seeking(source, folder / "midia-revisao.mp4")
-    total, audio = probe(source)
+    total, audio, source_size = probe(source, include_size=True)
     log(f"Analisando {source.name} ({total / 60:.1f} min)")
+    if options.full_hd and min(source_size) < 1080:
+        options = replace(options, full_hd=False)
     if options.auto_face and not options.face:
         face = detect_facecam(source, total)
         options = replace(options, face=face)
         log(f"Facecam: {face or 'sem rosto recorrente no canto; usando gameplay'}")
     if options.face and not options.game:
         options = replace(options, game=gameplay_region(options.face))
+    close_allowed = True
+    if options.face and options.style == "dynamic":
+        _, _, face_width, face_height = map(float, options.face.split(","))
+        close_width = min(face_width * source_size[0], face_height * source_size[1] * 9 / 16)
+        close_allowed = close_width >= 240
+        if not close_allowed:
+            log("Facecam com poucos pixels na fonte. Mantendo a câmera menor durante as reações.")
     if options.style == "all" and not options.face:
         options = replace(options, style="game")
         log("Exportação sem facecam: gerando uma versão de gameplay.")
@@ -862,7 +908,7 @@ def _process(source, folder, options, log, screening, staging_dir, on_review, re
             editorial_signals[(low, high)] = (inspect(source, high - offset, audio, options.face, start=offset),
                                               offset)
     report = {"schema": 1, "source": str(source if source.parent == folder else original_source), "original_source": str(original_source),
-              "duration": total, "unit": "seconds",
+              "duration": total, "unit": "seconds", "source_size": list(source_size),
               "method": method,
               "facecam": options.face, "gameplay": options.game, "clips": []}
     if options.director_reference:
@@ -931,10 +977,15 @@ def _process(source, folder, options, log, screening, staging_dir, on_review, re
         cut_options = options
         if options.effects_model and options.render and spoken:
             from creative_studio import EFFECTS, propose
-            creative = propose(options.effects_model, " ".join(word for _, _, word in spoken), hook)
+            creative = propose(options.effects_model, " ".join(word for _, _, word in spoken), hook,
+                               direct_framing=bool(options.face and options.style == "dynamic"))
             if creative["generated"]:
                 effect = EFFECTS[creative["effect"]]
-                cut_options = replace(options, polish=effect != "corte", transition=effect)
+                transition = options.transition if options.transition == "v9" else effect
+                cut_options = replace(options, polish=effect != "corte", transition=transition)
+                log(f"Montagem com Ollama: {creative['effect']} · {creative.get('framing', 'enquadramento V9')}.")
+        if options.style == "dynamic" and (creative.get("framing") or not close_allowed):
+            by_style["dynamic"] = direct_shots(by_style["dynamic"], creative.get("framing"), close_allowed)
         report["clips"].append({
             "parts": [dict(start=a, end=b, score=score(range_signals[(a, b)][0], a, b, range_signals[(a, b)][1]))
                       for a, b in kept],
@@ -971,17 +1022,65 @@ def _process(source, folder, options, log, screening, staging_dir, on_review, re
                 log(f"Codificador de vídeo: {variant['finishing']['video_encoder']}.")
                 if screening is not None:
                     from final_screen import evaluate
+                    from auto_correction import approved, attempt_data, correction
                     log(f"Revisão técnica e editorial: {destination.name}.")
                     model, threshold, prior = screening
                     prior = {**prior, "speech_language": options.speech_language}
+                    stopped = prior.get("stop")
                     verdict = evaluate(publish, FF, command, sum(b - a for a, b, _ in shots),
                                        words, model, threshold, prior)
+                    if stopped and stopped():
+                        raise InterruptedError("Revisão cancelada.")
+                    if prior.get("auto_finalize"):
+                        attempts = [attempt_data(verdict)]
+                        variant["attempts"] = attempts
+                        if not approved(verdict):
+                            action = None
+                            try:
+                                retry = correction(source, total, audio, shots, words, cut_options, verdict,
+                                                   protect_edges=bool(prior.get("protect_edges")))
+                                if retry:
+                                    action, next_shots, next_words, next_options = retry
+                                    log(f"Ajuste automático ({action}): nova montagem para {destination.name}.")
+                                    finishing = render_clip(source, publish, next_shots,
+                                                           next_words if options.captions else [],
+                                                           next_options, hook, timing_words=next_words)
+                                    retried = evaluate(publish, FF, command, sum(b - a for a, b, _ in next_shots),
+                                                       next_words, model, threshold, {**prior, "correction": action})
+                                    attempts.append(dict(attempt_data(retried), adjustment=action))
+                                    log(f"Nova avaliação: {retried['score']}/100.")
+                                    if approved(retried):
+                                        verdict, shots, words = retried, next_shots, next_words
+                                        variant["finishing"] = finishing
+                                        variant["layouts"] = [dict(start=a, end=b, style=s) for a, b, s in shots]
+                                        if style == styles[0]:
+                                            entry["layouts"] = variant["layouts"]
+                                            entry["parts"] = [dict(start=a, end=b, score=score(signals, a, b)) for a, b, _ in shots]
+                            except (ValueError, OSError, RuntimeError, sp.SubprocessError) as error:
+                                if isinstance(error, InterruptedError):
+                                    raise
+                                attempts.append({"score": None, "adjustment": action, "recommendation": "pending",
+                                                 "reason": "Falha ao preparar ou renderizar o ajuste."})
+                                log(f"Ajuste automático indisponível: {error}")
+                            if stopped and stopped():
+                                raise InterruptedError("Revisão cancelada.")
+                            if not approved(verdict):
+                                if verdict.get("technical_ok"):
+                                    verdict["reason"] = ("revisao_ia_indisponivel" if not verdict.get("editorial")
+                                                         else "reprovado_apos_ajuste" if action
+                                                         else "editorial_sem_recuperacao")
+                                verdict["status"] = "rejected"
+                        verdict["attempts"] = attempts
                     verdict["duration"] = sum(b - a for a, b, _ in shots)
+                    verdict["source_size"] = list(source_size)
+                    verdict["output_size"] = list(cut_options.frame_size)
+                    if entry["creative"].get("generated"):
+                        verdict["edit_model"] = options.effects_model
                     verdict["source"] = str(original_source)
                     verdict["visual_credits"] = variant["finishing"]["visual_credits"]
                     verdict["studio_transcript"] = verdict.pop("review_transcript", " ".join(word for _, _, word in words)[:1450])
                     offset = prior.get("origin_offset", 0)
-                    verdict["ranges"] = [(part["start"] + offset, part["end"] + offset) for part in entry["parts"]]
+                    verdict["ranges"] = [(a + offset, b + offset) for a, b, _ in shots]
                     if "origin_url" in prior:
                         verdict["origin_url"] = prior["origin_url"]
                     variant["screening"] = verdict

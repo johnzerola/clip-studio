@@ -7,6 +7,8 @@ import subprocess
 import statistics
 
 from viral_rank import judge_local
+from gemini_review import judge_gameplay, model_configured
+from editorial_review import review
 import runtime_profile as runtime
 
 
@@ -43,14 +45,16 @@ def evaluate(path, ff, run, expected, words, model, threshold, prior):
         except (OSError, subprocess.TimeoutExpired):
             reason = "erro_de_revisao_tecnica"
     if reason:
-        return {"status": "rejected", "technical_ok": False, "threshold": threshold, "score": 0, "reason": reason}
+        return {"status": "rejected", "technical_ok": False, "threshold": threshold, "score": 0,
+                "reason": reason, "recommendation": "weak"}
 
     has_audio = any(s["codec_type"] == "audio" for s in info["streams"])
     transcript_source = "timeline"
     if (model or vision_model) and has_audio:
-        from engine import transcribe
+        from engine import speech_model_path, transcribe
         try:
-            words = transcribe(path, 0, duration, language=prior.get("speech_language", "auto"))
+            model_asr = "base" if prior.get("correction") == "fala" and speech_model_path("base", download=False) else None
+            words = transcribe(path, 0, duration, model=model_asr, language=prior.get("speech_language", "auto"))
             transcript_source = "render"
         except (OSError, RuntimeError, subprocess.SubprocessError):
             pass
@@ -65,7 +69,7 @@ def evaluate(path, ff, run, expected, words, model, threshold, prior):
     final_motion = max(movements, default=0)
     final_median = statistics.median(movements) if movements else 0
     if not prior.get("signals"):
-        prior = {"raw_score": min(78, 18 + min(32, pace * 18) + min(28, final_motion * 7)),
+        prior = {**prior, "raw_score": min(78, 18 + min(32, pace * 18) + min(28, final_motion * 7)),
                  "signals": {"motion": final_motion, "motion_median": final_median,
                              "reaction": max(audio_peaks, default=0) >= 2.5,
                              "opening": bool(re.search(r"[!?]", " ".join(w for _, _, w in words[:10])))}}
@@ -92,22 +96,31 @@ def evaluate(path, ff, run, expected, words, model, threshold, prior):
     best = "ação" if action_score > story_score else "narrativa"
     score = min(100, max(0, round(max(story_score, action_score))))
     visual = None
-    if vision_model:
-        images = []
+    editorial = None
+    gemini_gameplay = not tokens and model_configured()
+    visual_provider = None
+    if vision_model or gemini_gameplay:
+        frames = []
         try:
-            for point in (.06, .50, .90):
-                jpg = run([*ff, "-ss", str(duration*point), "-threads", "1", "-i", str(path),
-                           "-frames:v", "1", "-an", "-vf", "scale=180:320", "-c:v", "mjpeg",
+            for at in (min(1.25, duration * .06), duration * .28, duration * .58, duration * .91):
+                jpg = run([*ff, "-ss", str(at), "-threads", "1", "-i", str(path),
+                           "-frames:v", "1", "-an", "-vf", "scale=288:512", "-c:v", "mjpeg",
                            "-threads", "1", "-f", "image2pipe", "pipe:1"], timeout=8)
                 if jpg:
-                    images.append(base64.b64encode(jpg).decode("ascii"))
+                    frames.append((round(at, 2), base64.b64encode(jpg).decode("ascii")))
         except (OSError, RuntimeError, subprocess.SubprocessError):
-            images = []
-        if images:
-            visual = judge_local(vision_model, transcript,
-                                 {**features, "frame_order": "gancho, meio, desfecho", "sampled_frames": len(images)}, images)
-            if visual:
-                score = round(.70 * score + .30 * visual["score"])
+            frames = []
+        if frames:
+            editorial = review(vision_model, words, features, frames, threshold)
+            if editorial:
+                visual = editorial
+                score = editorial["score"]
+                visual_provider = "ollama_editorial"
+            elif gemini_gameplay:
+                visual = judge_gameplay([image for _, image in frames[:3]])
+                if visual:
+                    visual_provider = "gemini_visual"
+                    score = round(.70 * score + .30 * visual["score"])
         if not visual and tokens and model and model == vision_model:
             semantic = judge_local(model, transcript, features)
             if semantic:
@@ -119,8 +132,9 @@ def evaluate(path, ff, run, expected, words, model, threshold, prior):
             "action_score": round(action_score), "speech_seconds": round(speech_seconds, 2),
             "final_motion": round(final_motion, 3), "final_audio_peak_ratio": round(max(audio_peaks, default=0), 3),
             "model": model if semantic else None,
-            "visual": visual, "vision_model": vision_model if visual else None,
-            "review_engine": "ollama_visual" if visual else "ollama_texto" if semantic else "regras_locais",
+            "visual": visual, "vision_model": (visual.get("model") or vision_model) if visual else None,
+            "editorial": editorial, "recommendation": editorial["recommendation"] if editorial else "pending",
+            "review_engine": visual_provider or ("ollama_texto" if semantic else "regras_locais"),
             "transcript_source": transcript_source,
             "review_transcript": transcript[:1450],
             "semantic": semantic, "reason": "nota_suficiente" if score >= threshold else "abaixo_do_limiar"}

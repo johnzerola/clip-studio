@@ -17,10 +17,15 @@ delete process.env.CORTEX_SESSION;
 delete process.env.CORTEX_LAUNCH_CODE;
 if (!token || token.length < 32) throw new Error("Inicie o Clip Studio pelo executável.");
 const python = path.join(root, ".venv/Scripts/python.exe");
-const commands = new Set(["render", "live", "modelar", "jobs", "open", "rhythm", "cancel", "open-live", "pick", "ai-status", "ai-install", "update-status", "update-install", "library", "clip-open-studio", "agenda", "schedule", "review", "youtube-account", "youtube-connect", "publish", "retention", "feedback", "visual-library", "visual-import", "visual-enable", "visual-reviews", "visual-review-queue", "storage"]);
-const longRequests = new Set(["pick", "modelar", "ai-install", "youtube-connect", "publish", "visual-import", "storage"]);
-for (const name of ["trim", "job-details"]) commands.add(name);
+const commands = new Set(["render", "live", "modelar", "jobs", "open", "rhythm", "cancel", "open-live", "pick", "ai-status", "ai-start", "ai-install", "update-status", "update-install", "library", "clip-open-studio", "agenda", "schedule", "review", "youtube-account", "youtube-connect", "publish", "retention", "feedback", "visual-library", "visual-import", "visual-enable", "visual-reviews", "visual-review-queue", "storage"]);
+const longRequests = new Set(["pick", "modelar", "ai-start", "ai-install", "youtube-connect", "publish", "visual-import", "storage"]);
+for (const name of ["trim", "job-details", "thumbnail", "reframe-copy", "reassess"]) commands.add(name);
+for (const name of ["gta-kit-info", "gta-kit-import", "gta-kit-draft", "gta-kit-render", "gta-kit-status"]) commands.add(name);
+longRequests.add("gta-kit-draft");
 longRequests.add("trim");
+longRequests.add("thumbnail");
+longRequests.add("reframe-copy");
+longRequests.add("reassess");
 const mediaCommands = new Map([["/_desktop/media", "clip-preview"], ["/_desktop/visual-media", "visual-media"], ["/_desktop/review-media", "visual-review-media"]]);
 const mediaTypes = { ".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm", ".png": "image/png",
   ".gif": "image/gif", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" };
@@ -99,7 +104,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(403).end(); return;
   }
   res.setHeader("Cache-Control", "no-store");
-  const exclusive = ["live", "modelar", "render", "pick", "trim", "update-install", "publish", "youtube-connect", "visual-review-queue"].includes(command);
+  const exclusive = ["live", "modelar", "render", "gta-kit-render", "pick", "trim", "reframe-copy", "reassess", "update-install", "publish", "youtube-connect", "visual-review-queue"].includes(command);
   if (exclusive && editing) { res.writeHead(409).end("Conclua a seleção aberta."); return; }
   if (exclusive) editing = true;
   try {

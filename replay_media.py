@@ -12,20 +12,21 @@ def download(url, directory, kind, stop, *, window=None, limit=None, max_height=
     from engine import REPLAY_HEIGHTS, capture_space, command
 
     directory.mkdir(parents=True, exist_ok=True)
-    suffix = "mp4" if kind == "video" else "mka"
+    suffix = "mka" if kind == "audio" else "mp4"
     target = directory / f"{kind}.{suffix}"
     args = [sys.executable, "-m", "yt_dlp", "--ignore-config", "--compat-options", "no-certifi",
             "--no-playlist", "--match-filter", "!is_live & !is_upcoming", "--socket-timeout", "15",
             "--retries", "2", "--concurrent-fragments", "1", "--no-progress"]
     if kind == "audio":
         args += ["-f", "bestaudio", "--remux-video", "mka"]
-    elif kind == "video" and window is not None:
+    elif kind in ("video", "preview") and window is not None:
         start, end = window
         if not 0 <= start < end <= start + 181:
             raise ValueError("Intervalo de vídeo inválido.")
-        if max_height not in REPLAY_HEIGHTS:
+        allowed = (480,) if kind == "preview" else REPLAY_HEIGHTS
+        if max_height not in allowed:
             raise ValueError("Qualidade de replay deve ser Full HD, 2K ou 4K.")
-        args += ["-f", f"bestvideo[height<={max_height}]+bestaudio/best[height<={max_height}]",
+        args += ["-f", f"bestvideo[height<={max_height}]+bestaudio/best[height<={max_height}]/bestvideo[height<={max_height}]",
                  "-S", f"res:{max_height}",
                  "--download-sections", f"*{start:.3f}-{end:.3f}",
                  "--merge-output-format", "mp4", "--remux-video", "mp4"]
@@ -79,3 +80,48 @@ def download(url, directory, kind, stop, *, window=None, limit=None, max_height=
     if tracks != {"audio"} or duration <= 0:
         raise RuntimeError("A faixa de áudio está indisponível.")
     return target, duration
+
+
+def replay_duration(url):
+    from engine import command
+
+    data = json.loads(command([sys.executable, "-m", "yt_dlp", "--ignore-config", "--no-playlist",
+                               "--skip-download", "--dump-single-json", "--socket-timeout", "12", "--", url],
+                              timeout=35))
+    if data.get("is_live") or data.get("live_status") in {"is_live", "is_upcoming"}:
+        raise ValueError("A transmissão ainda não virou replay.")
+    duration = float(data.get("duration") or 0.)
+    if not 8 <= duration <= 7 * 86400:
+        raise ValueError("Duração da gravação indisponível.")
+    return duration
+
+
+def gameplay_candidates(url, folder, stop, total, options, log):
+    """Probe at most three short low-resolution samples from a speechless VOD."""
+    from tempfile import TemporaryDirectory
+    from engine import inspect, probe
+
+    length = min(20., total, options.duration)
+    starts = sorted(set(round(max(0., total - length) * point, 3) for point in (.18, .50, .82)))
+    picks = []
+    for start in starts:
+        if stop.is_set():
+            raise InterruptedError("Triagem cancelada.")
+        end = start + length
+        try:
+            with TemporaryDirectory(prefix="replay-amostra-", dir=folder) as scratch:
+                from pathlib import Path
+                sample, _ = download(url, Path(scratch), "preview", stop, window=(start, end),
+                                     limit=80 * 1024**2, max_height=480)
+                duration, audio = probe(sample)
+                motions = [motion for _, motion, _ in inspect(sample, duration, audio)]
+                motion = max(motions, default=0.)
+                if motion >= 1.35:
+                    picks.append({"start": start, "end": round(end, 3), "transcript": "",
+                                  "av_score": min(65, round(36 + 10 * motion)),
+                                  "features": {"motion": round(motion, 2), "selection_source": "gameplay_amostrado"}})
+        except InterruptedError:
+            raise
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+            log("Amostra visual do replay indisponível. Verificando o próximo trecho.")
+    return sorted(picks, key=lambda pick: -pick["av_score"])[:options.count]

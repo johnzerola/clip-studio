@@ -60,6 +60,13 @@ if (-not $Check) {
 if ($LASTEXITCODE -ne 0) { throw 'Dependências inconsistentes.' }
 & $runtime -X utf8 (Join-Path $PSScriptRoot 'check.py')
 if ($LASTEXITCODE -ne 0) { throw 'Falha na verificação de runtime.' }
+if (-not $Check) {
+    & $runtime -X utf8 (Join-Path $project 'gta_kit_update.py')
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning 'O Kit GTA 6 incluído já pode ser usado com gameplay próprio. Para tentar novamente, execute Instalar.cmd.'
+        $global:LASTEXITCODE = 0
+    }
+}
 if (-not $Check -and -not $SkipShortcut) {
     & (Join-Path $PSScriptRoot 'shortcut.ps1')
 }

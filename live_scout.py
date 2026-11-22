@@ -50,6 +50,7 @@ class ScoutSettings:
     replay_after_live: bool = False
     replay_height: int = 1440
     acceleration: str = "auto"
+    auto_finalize: bool = False
 
 
 class TwitchPulse:
@@ -302,12 +303,15 @@ class LiveScout:
         score = min(100, pick["av_score"] + bonus)
         verdict = None
         judge_status = "disabled" if not self.settings.model else "not_eligible"
-        if (self.settings.model and pick["transcript"] and (score >= 40 or pick["features"]["story_link"])
+        defer_to_video = self.settings.review_final and self.settings.vision_model and self.settings.performance == "leve"
+        if (not defer_to_video and self.settings.model and pick["transcript"] and (score >= 40 or pick["features"]["story_link"])
                 and arrival - self.last_judge >= 25):
             verdict = judge_local(self.settings.model, pick["transcript"], pick["features"])
             judge_status = "scored" if verdict else "busy_or_unavailable"
             if verdict:
                 self.last_judge = arrival
+        elif defer_to_video:
+            judge_status = "revisao_final"
         combined = min(100, round(.42 * pick["av_score"] + .58 * verdict["score"] + bonus)) if verdict else score
         preliminary_threshold = (max(15, self.settings.threshold - 16)
                                  if self.settings.review_final else self.settings.threshold)

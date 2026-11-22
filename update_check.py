@@ -6,11 +6,12 @@ import time
 import urllib.request
 from pathlib import Path
 
-VERSION = "0.7.7"
+ROOT = Path(__file__).resolve().parent
+VERSION = (ROOT / "VERSION").read_text(encoding="utf-8-sig").strip()
 CHECK_INTERVAL_SECONDS = 20 * 60
 REPO = "johnzerola/clip-studio"
 API_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
-STATE_FILE = Path(__file__).resolve().parent / "update_check.local.json"
+STATE_FILE = ROOT / "update_check.local.json"
 _LOCK = threading.Lock()
 
 

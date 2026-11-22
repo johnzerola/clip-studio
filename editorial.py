@@ -133,7 +133,7 @@ def refine_montage(parts, words, total):
         previous_terms |= best_terms
     return result
 
-def quiet_live_edits(low, high, bins, words, noise, step=2.):
+def quiet_live_edits(low, high, bins, words, noise, step=2., *, minimum=4.):
     """Remove only long stretches with quiet audio, little motion and no speech."""
     gate = 32768 * 10 ** (noise / 20)
     live_motion = [motion for _, motion, _ in bins if motion >= 2]
@@ -151,6 +151,6 @@ def quiet_live_edits(low, high, bins, words, noise, step=2.):
                 continue
         if idle is not None:
             end = min(start, high)
-            if end - idle >= 4:
+            if end - idle >= minimum:
                 yield idle + .4, end - .4, "espera sem fala nem ação", ""
             idle = None

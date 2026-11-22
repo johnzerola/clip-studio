@@ -7,13 +7,13 @@ from pathlib import Path
 from editorial import normalized
 
 
-def caption_groups(words):
+def caption_groups(words, *, max_words=4, max_chars=28):
     group = []
     for start, end, word in sorted(set(words)):
         if end <= start or not word.strip():
             continue
-        if group and (start - group[-1][1] > .48 or len(group) >= 4
-                      or len(" ".join([*(p[2] for p in group), word])) > 28):
+        if group and (start - group[-1][1] > .48 or len(group) >= max_words
+                      or len(" ".join([*(p[2] for p in group), word])) > max_chars):
             yield group
             group = []
         group.append((start, end, word))

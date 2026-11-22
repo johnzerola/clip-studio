@@ -9,7 +9,7 @@ import subprocess
 import sys
 from hashlib import sha256
 
-from job_registry import ROOT, ACTIVE, cancel, connect, job_activity, list_jobs, outputs, submit
+from job_registry import ROOT, ACTIVE, cancel, connect, get, job_activity, list_jobs, outputs, submit
 
 
 def output_dir():
@@ -35,6 +35,10 @@ def pick(data):
             return {"path": filedialog.askdirectory(parent=window, initialdir=str(output_dir()), title="Salvar cortes em")}
         if data.get("kind") == "visual-library":
             return {"path": filedialog.askdirectory(parent=window, title="Pasta de memes e B-roll")}
+        if data.get("kind") == "gta-kit":
+            return {"path": filedialog.askopenfilename(parent=window, title="Importar Kit GTA 6", filetypes=[("Kit GTA 6", "*.zip")])}
+        if data.get("kind") == "gta-narration":
+            return {"path": filedialog.askopenfilename(parent=window, title="Escolher narração", filetypes=[("Áudio", "*.wav *.mp3 *.m4a *.aac *.flac *.ogg")])}
         if data.get("kind") in ("visual-backdrop", "visual-asset"):
             return {"path": filedialog.askopenfilename(parent=window, title="Escolher mídia da biblioteca",
                                                        filetypes=[("Mídia", "*.png *.jpg *.jpeg *.webp *.gif *.mp4 *.mov *.webm")])}
@@ -75,10 +79,16 @@ def start_job(command, data):
         request["director_project"] = str(Path(data["project"]).resolve())
     if command == "live":
         request.update(review=True, replay_after_live=bool(data.get("replay_after_live", True)))
-    if request.get("review") and data.get("ollama_review", request.get("performance", "leve") != "leve") is True:
+        request["gta_kit_style"] = data.get("gta_kit_style") is True
+    local_ai = request.get("review") and data.get("ollama_review", True) is True
+    request["auto_finalize"] = bool(local_ai and command in ("render", "live") and not request.get("ranges"))
+    model = ""
+    if local_ai:
         models = installed_models() or set()
         model = next((item for item in MODELS if item in models), "")
         request.update(model=model, vision_model=model)
+        if model and not request.get("effects_model"):
+            request["effects_model"] = model
     sources, *_ = prepare(request)
     if command == "live":
         from engine import CAPTURE_RESERVE, capture_space
@@ -92,6 +102,11 @@ def start_job(command, data):
                 raise ValueError("No modo Leve, selecione até duas lives. Use Equilibrado se quiser capturar mais canais.")
     row = submit(request, "Hook Spark / " + command)
     result = {"message": "Trabalho adicionado à fila V9.", "id": row["id"]}
+    if local_ai:
+        result["message"] += (f" IA de montagem e revisão: {model}." if model else
+                              " O motor vai verificar o Ollama antes de iniciar."
+                              if request["auto_finalize"] and request.get("mode", "render") == "render" else
+                              " Ollama sem modelo conectado. Usando montagem e revisão do V9.")
     if profile:
         result["profile"] = {key: profile[key] for key in ("preset_sha256", "source_hashes", "reference_shot_seconds")}
     return result
@@ -203,11 +218,13 @@ def library(platform):
             if path.is_relative_to(folder.resolve()) and path.is_file() and path.suffix.lower() == ".mp4":
                 rows[item["id"]] = {key: item[key] for key in
                     ("id", "title", "description", "tags", "reason", "score", "weighted_score", "duplicate_of",
-                     "vote", "feedback_points", "retention_points", "topic", "similar_title")}
+                     "vote", "feedback_points", "retention_points", "topic", "similar_title", "recommendation")}
     for key, path in exported_clips():
-        rows[key] = {"id": key, "title": path.stem.replace("_", " ").replace("-", " "),
+        title = path.stem[5:] if path.stem.startswith("clip_GTA 6 - ") else path.stem.replace("_", " ").replace("-", " ")
+        rows[key] = {"id": key, "title": title.strip(),
                      "score": None, "weighted_score": None, "vote": "", "duplicate_of": None}
-    return sorted(rows.values(), key=lambda row: -(row["weighted_score"] if row["weighted_score"] is not None else -1))[:60]
+    return sorted(rows.values(), key=lambda row: (row.get("recommendation") != "recommended",
+                         -(row["weighted_score"] if row["weighted_score"] is not None else -1)))[:60]
 
 
 def exported_clips():
@@ -260,6 +277,22 @@ def open_brave(url):
 def action(command, data):
     if command in ("render", "live", "modelar"):
         return start_job(command, data)
+    if command.startswith("gta-kit-"):
+        from gta_kit import draft, info, queue, register
+
+        if command == "gta-kit-info":
+            return info()
+        if command == "gta-kit-import":
+            return register(data["path"])
+        if command == "gta-kit-draft":
+            return draft(data)
+        if command == "gta-kit-render":
+            return queue(data, output_dir(), "Modelar / Kit GTA 6")
+        if command == "gta-kit-status":
+            row = get(data["id"])
+            if row["origin"] != "Modelar / Kit GTA 6":
+                raise ValueError("Trabalho do Kit GTA 6 não encontrado.")
+            return {**desktop_job(row), "progress": session_details(data["id"])["events"][-1:]}
     if command == "pick":
         return pick(data)
     if command == "trim":
@@ -311,12 +344,15 @@ def action(command, data):
             raise ValueError("O trabalho ainda não tem resultado disponível.")
         os.startfile(target)
         return {"message": "Resultado aberto."}
-    if command in ("ai-status", "ai-install"):
-        from ai_setup import MODELS, installed_models, install_model
+    if command in ("ai-status", "ai-start", "ai-install"):
+        from ai_setup import MODELS, installed_models, install_model, official_executable, start_model_service
         if command == "ai-install":
             install_model(data["model"], lambda _: None)
+        elif command == "ai-start":
+            start_model_service()
         models = installed_models()
-        return {"available": models is not None, "models": [model for model in MODELS if model in (models or set())]}
+        return {"available": models is not None, "installed": bool(official_executable()),
+                "models": [model for model in MODELS if model in (models or set())]}
     if command in ("update-status", "update-install"):
         return update_info(command == "update-install")
     if command in ("youtube-account", "youtube-connect"):
@@ -341,14 +377,54 @@ def action(command, data):
             if key == data["id"]:
                 return {"file": str(path)}
         raise ValueError("Clipe exportado indisponível.")
-    if command in ("clip-preview", "schedule", "review", "publish", "retention", "feedback"):
+    if command in ("clip-preview", "schedule", "review", "reassess", "publish", "retention", "feedback", "thumbnail", "reframe-copy"):
         from publish_state import browser_draft, review_info
         folder, path, row = clip_record(data["id"])
         if command == "clip-preview":
             return {"file": str(path)}
+        if command == "reassess":
+            if any(job["state"] in ("queued", "running") for job in list_jobs(8)):
+                raise ValueError("Revise a galeria com IA quando a sessão de captura e edição terminar.")
+            from ai_setup import MODELS, installed_models
+            from engine import FF, command as run, probe
+            from final_screen import evaluate
+            from posting_queue import save_editorial_review
+            from viral_knowledge import load_history
+            import runtime_profile
+
+            models = installed_models() or set()
+            model = next((name for name in MODELS if name in models), "")
+            if not model:
+                raise ValueError("Ative o Ollama e selecione um Qwen3.5 em Integrações.")
+            runtime_profile.configure("leve", "auto")
+            runtime_profile.lower_worker_priority()
+            load_history(folder)
+            previous = review_info(folder, row["id"])
+            threshold = int(previous.get("threshold") or 60)
+            verdict = evaluate(path, FF, run, probe(path)[0], [], model, threshold,
+                               {"vision_model": model, "speech_language": "auto"})
+            if verdict["recommendation"] == "pending":
+                raise ValueError("A revisão multimodal ficou incompleta. A nota anterior foi preservada.")
+            save_editorial_review(folder, row["id"], verdict)
+            return {"score": verdict["score"], "recommendation": verdict["recommendation"],
+                    "editorial": verdict.get("editorial")}
+        if command == "thumbnail":
+            from visual_clip_tools import suggest_thumbnail
+            return suggest_thumbnail(path, str(data.get("title") or row["title"]), data.get("at"))
+        if command == "reframe-copy":
+            if any(job["state"] in ("queued", "running") for job in list_jobs(8)):
+                raise ValueError("Salve o novo enquadramento assim que a sessão V9 terminar.")
+            from visual_clip_tools import reframe_copy
+            reframe_copy(folder, path, zoom=data["zoom"], x=data["x"], y=data["y"])
+            return {"message": "Cópia com o novo enquadramento salva em Cortes gerados."}
         if command == "review":
             review = review_info(folder, row["id"])
+            judgement = review.get("visual") or review.get("semantic") or {}
             return {"notes": review.get("reason", row["reason"]), "engine": review.get("review_engine"),
+                    "source_size": review.get("source_size"), "output_size": review.get("output_size"),
+                    "edit_model": review.get("edit_model"), "editorial_reason": judgement.get("reason"),
+                    "knowledge": judgement.get("knowledge", []), "editorial": review.get("editorial"),
+                    "attempts": review.get("attempts", []),
                     "transcript": str(review.get("studio_transcript") or "")[:12000],
                     "draft": browser_draft(folder, row["id"], platform)}
         if command == "retention":
@@ -382,7 +458,7 @@ def action(command, data):
                                   {"title": title, "description": caption}, lambda _: None)
             return {"message": result["detail"] or result["state"], "failed": result["state"] in ("failed", "uncertain")}
         browser_draft(folder, row["id"], platform, {"title": title, "caption": caption,
-                      "planned": planned.astimezone().isoformat(timespec="minutes")})
+                      "planned": planned.astimezone().isoformat(timespec="minutes")}, only_new=data.get("batch") is True)
         return {"message": "Rascunho salvo na agenda local."}
     raise ValueError("Ação desconhecida.")
 
