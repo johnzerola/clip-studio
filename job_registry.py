@@ -142,7 +142,12 @@ def start(key, action, stop, log):
             except sqlite3.Error:
                 continue
 
+    last_problem = None
+
     def event(line):
+        nonlocal last_problem
+        if str(line).startswith(("Erro:", "Sessão interrompida:")):
+            last_problem = str(line).split(": ", 1)[-1][:500]
         log(line)
         with connect() as db:
             db.execute("INSERT INTO events(job,line) VALUES(?,?)", (key, str(line)[:2000]))
@@ -159,7 +164,7 @@ def start(key, action, stop, log):
     try:
         code = 0 if stop.is_set() else action(event, session)
         finish(key, "cancelled" if stop.is_set() else "failed" if code else "completed",
-               "Consulte o registro para detalhes." if code else None)
+               (last_problem or "Ver registro e plano para detalhes.") if code else None)
         return code or 0
     except BaseException as error:
         finish(key, "cancelled" if stop.is_set() else "failed", str(error)[:500])

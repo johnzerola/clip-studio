@@ -13,7 +13,7 @@ from job_registry import ROOT, TERMINAL, cancel, finish, get, list_jobs, outputs
 from runtime_profile import PROFILES
 from engine import CAPTURE_HEIGHTS, REPLAY_HEIGHTS
 
-STYLES = ("dynamic", "split", "reaction", "gamecam", "all", "interview")
+STYLES = ("dynamic", "split", "reaction", "gamecam", "all", "interview", "gta6")
 
 
 def prepare(request):
@@ -74,6 +74,8 @@ def prepare(request):
             archive_url(url)
     if style not in STYLES or profile not in PROFILES or mode not in ("plan", "render", "preview"):
         raise ValueError("Modo, estilo ou perfil inválido.")
+    if style == "gta6":
+        style, kit_mode = "dynamic", "on"
     if not (10 <= duration <= 180 and 1 <= count <= 8 and 0 <= minutes <= 720 and 20 <= threshold <= 95):
         raise ValueError("Duração 10–180 s, 1–8 clipes, captura 0–720 min e nota 20–95.")
     out = Path(request.get("output") or ROOT / "resultados").resolve()
@@ -112,13 +114,20 @@ def prepare(request):
 
 
 def ensure_media_path():
-    if os.name == "nt" and not shutil.which("ffmpeg"):
+    if os.name == "nt" and (not shutil.which("ffmpeg") or not shutil.which("ffprobe")):
         packages = Path(os.getenv("LOCALAPPDATA", "")) / "Microsoft" / "WinGet" / "Packages"
         for package in ("Gyan.FFmpeg_*", "BtbN.FFmpeg.*"):
             for binary in sorted(packages.glob(f"{package}/ffmpeg-*/bin/ffmpeg.exe"), reverse=True):
                 if binary.with_name("ffprobe.exe").is_file():
                     os.environ["PATH"] = str(binary.parent) + os.pathsep + os.environ.get("PATH", "")
-                    return
+                    break
+            else:
+                continue
+            break
+    missing = [program for program in ("ffmpeg", "ffprobe") if not shutil.which(program)]
+    if missing:
+        raise RuntimeError("Faltam ferramentas de vídeo (%s). Execute Instalar.cmd --automatico na pasta do Codex."
+                           % ", ".join(missing))
 
 
 def run_pending(key):

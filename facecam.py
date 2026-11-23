@@ -8,22 +8,34 @@ def estimate(frames, width, height):
 
     cv2.setNumThreads(1)
     detector = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    alternate = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_alt2.xml")
     if detector.empty():
         raise RuntimeError("Classificador de facecam indisponível.")
+
+    def corner_hits(boxes):
+        for x, y, w, h in boxes:
+            cx, cy = (x + w / 2) / width, (y + h / 2) / height
+            on_edge = cx < .24 or cx > .76
+            in_corner = (cx < .34 or cx > .66) and (cy < .38 or cy > .62)
+            if (on_edge or in_corner) and w / width <= .19:
+                yield cx, cy, w / width, h / height
+
     clusters = []
     for index, frame in enumerate(frames):
         gray = np.frombuffer(frame, dtype=np.uint8).reshape(height, width)
-        for x, y, w, h in detector.detectMultiScale(gray, 1.12, 5, minSize=(20, 20)):
-            cx, cy, fw, fh = (x + w / 2) / width, (y + h / 2) / height, w / width, h / height
-            on_edge = cx < .24 or cx > .76
-            in_corner = (cx < .34 or cx > .66) and (cy < .38 or cy > .62)
-            if not ((on_edge or in_corner) and fw <= .19):
-                continue
-            hit = (cx, cy, fw, fh)
+        hits = list(corner_hits(detector.detectMultiScale(gray, 1.12, 5, minSize=(20, 20))))
+        if not hits and not alternate.empty():
+            side = round(width * .34)
+            for left in (0, width - side):
+                detail = cv2.resize(gray[:, left:left + side], None, fx=1.5, fy=1.5)
+                boxes = alternate.detectMultiScale(cv2.equalizeHist(detail), 1.1, 4, minSize=(21, 21))
+                hits.extend(corner_hits((x / 1.5 + left, y / 1.5, w / 1.5, h / 1.5)
+                                        for x, y, w, h in boxes))
+        for hit in hits:
+            cx, cy, _, _ = hit
             for group in clusters:
-                if index not in group and any(abs(cx - p[0]) + abs(cy - p[1]) < .075
-                                             for p in group.values()):
-                    group[index] = hit
+                if any(abs(cx - p[0]) + abs(cy - p[1]) < .075 for p in group.values()):
+                    group.setdefault(index, hit)
                     break
             else:
                 clusters.append({index: hit})

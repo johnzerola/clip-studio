@@ -19,7 +19,7 @@ def manual_review_score(verdict):
     if not verdict.get("technical_ok") or approved(verdict):
         return None
     score = max(verdict["score"], verdict.get("local_score", 0))
-    return score if score >= 65 else None
+    return score if score >= max(65, verdict.get("threshold", 65)) else None
 
 
 def attempt_data(verdict):

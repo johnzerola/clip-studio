@@ -116,6 +116,7 @@ class Options:
     gta_accent: str = ""
     visual_disabled: bool = False
     visual_plan: tuple[int, float, Asset] | None = None
+    live_edit: bool = False
 
     @property
     def frame_size(self):
@@ -187,9 +188,14 @@ def detect_facecam(source, duration):
     points = [duration * i / 7 for i in range(1, 7)]
     frames = []
     for point in points:
-        frame = command(FF + ["-threads", "2", "-ss", str(point), "-i", str(source),
-                              "-an", "-frames:v", "1", "-vf", f"scale={width}:{height},format=gray",
-                              "-c:v", "rawvideo", "-threads", "1", "-f", "rawvideo", "pipe:1"], timeout=6)
+        try:
+            frame = command(FF + ["-threads", "2", "-ss", str(point), "-i", str(source),
+                                  "-an", "-frames:v", "1", "-vf", f"scale={width}:{height},format=gray",
+                                  "-c:v", "rawvideo", "-threads", "1", "-f", "rawvideo", "pipe:1"], timeout=6)
+        except sp.TimeoutExpired:
+            if not frames:
+                raise
+            break
         if len(frame) == width * height:
             frames.append(frame)
     if len(frames) < 3:
@@ -311,11 +317,15 @@ def layout_graph(style, options, focus_x=None):
         return (crop(region) + f"scale={width}:{height}:force_original_aspect_ratio=decrease:"
                 f"force_divisible_by=2,setsar=1,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=0x101522")
     def game_canvas(source, target):
-        if focus_x is not None or portrait_fill:
+        game = options.game or ("0.09,0,0.82,1" if style == "game_detail" else "")
+        if options.look == "gta-kit" or (style != "game_detail" and
+                (focus_x is not None or (portrait_fill and not options.live_edit))):
             anchor = .5 if focus_x is None else focus_x
-            return (f"{source}{crop(options.game)}scale={canvas_width}:{canvas_height}:force_original_aspect_ratio=increase:"
-                    f"force_divisible_by=2,crop={canvas_width}:{canvas_height}:(iw-ow)*{anchor}:(ih-oh)/2,setsar=1{target}")
-        return (f"{source}{crop(options.game)}split=2[back][play];"
+            framing = (f"x='(iw-ow)*({anchor})':y=(ih-oh)/2" if isinstance(anchor, str)
+                       else f"(iw-ow)*{anchor}:(ih-oh)/2")
+            return (f"{source}{crop(game)}scale={canvas_width}:{canvas_height}:force_original_aspect_ratio=increase:"
+                    f"force_divisible_by=2,crop={canvas_width}:{canvas_height}:{framing},setsar=1{target}")
+        return (f"{source}{crop(game)}split=2[back][play];"
                 f"[back]scale=180:320:force_original_aspect_ratio=increase:force_divisible_by=2,"
                 f"crop=180:320,gblur=sigma=12,drawbox=c=black@0.24:t=fill,"
                 f"scale={canvas_width}:{canvas_height},setsar=1[blur];"
@@ -345,13 +355,17 @@ def layout_graph(style, options, focus_x=None):
     if style == "gamecam":
         margin = scale_units(22)
         x = f"W-w-{margin}" if options.corner == "direito" else str(margin)
-        side = scale_units(196)
+        side = scale_units(171 if options.look == "gta-kit" else 196)
+        # GTA uses the approved 256 px inset at 1080 px wide and positions it higher.
+        if options.look == "gta-kit":
+            margin = scale_units(28)
+            x = f"W-w-{margin}" if options.corner == "direito" else str(margin)
         circle = ("format=yuva444p,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':"
                   "a='if(lte((X-W/2)*(X-W/2)+(Y-H/2)*(Y-H/2),(W/2-2)*(W/2-2)),255,0)'")
         camera = (crop(options.face) + f"scale={side}:{side}:force_original_aspect_ratio=increase:"
                   f"force_divisible_by=2,crop={side}:{side}:(iw-ow)*{focus}:(ih-oh)/2,setsar=1," + circle)
         return (f"[0:v]split=2[f][g];{game_canvas('[g]', '[main]')};"
-                f"[f]{camera}[cam];[main][cam]overlay={x}:{scale_units(190)}[base]")
+                f"[f]{camera}[cam];[main][cam]overlay={x}:{scale_units(82 if options.look == 'gta-kit' else 190)}[base]")
     if style == "split":
         if options.look in ("shorts", "gta-kit"):
             return (f"[0:v]split=2[f][g];[f]{fill(options.face, scale_units(500))}[top];"
@@ -375,6 +389,12 @@ def layouts(signals, start, end, options, words=(), signal_offset=0):
         cuts = [start + (end - start) * i / count for i in range(count)] + [end]
         return [(a, b, "interview") for a, b in zip(cuts, cuts[1:])]
     if not options.face:
+        if options.live_edit and options.style == "dynamic" and not options.game and end - start >= 10:
+            from live_edit_style import gameplay_detail
+            at = gameplay_detail(signals, words, start, end, signal_offset)
+            if at is not None:
+                return [(start, at, "game"), (at, at + 2.1, "game_detail"),
+                        (at + 2.1, end, "game")]
         return [(start, end, "game")]
     if options.style != "dynamic":
         return [(start, end, options.style)]
@@ -425,7 +445,7 @@ def layouts(signals, start, end, options, words=(), signal_offset=0):
 def direct_shots(shots, framing, close_allowed):
     directed = []
     for start, end, style in shots:
-        if style != "game":
+        if style not in {"game", "game_detail"}:
             if framing == "jogo":
                 style = "gamecam"
             elif framing == "juntos" and style == "face":
@@ -666,6 +686,20 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
     compact_once = (runtime.active.low_priority and options.compression == "compacto"
                     and video_encoder[1] != "libopenh264")
     v9 = options.polish and options.transition == "v9"
+    gta = options.look == "gta-kit"
+    focus_at, gta_focus = shots[0][0], [.5]
+    gta_cut = next((i for i, (_, _, style) in enumerate(shots) if i and style in {"game", "gamecam"}
+                    and shots[i-1][2] in {"split", "face", "reaction"}), None) if gta else None
+    if gta and any(style in {"game", "gamecam", "game_detail"} for _, _, style in shots):
+        from live_edit_style import gameplay_focus
+        try:
+            sample = command(FF + ["-threads", "2", "-skip_frame", "noref", "-ss", str(focus_at),
+                                  "-i", str(source), "-t", str(min(75., shots[-1][1]-focus_at)), "-an",
+                                  "-vf", crop(options.game) + "fps=1,scale=96:54,format=gray",
+                                  "-c:v", "rawvideo", "-threads", "1", "-f", "rawvideo", "pipe:1"], timeout=15)
+            gta_focus = gameplay_focus(sample)
+        except (OSError, RuntimeError, sp.SubprocessError):
+            pass
     accents = accent_shots(shots) if options.polish else {}
     spoken = timing_words if timing_words is not None else words
     pending_assets = {asset.path: asset for asset in options.visual_library}
@@ -702,12 +736,21 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
                      and shots[i - 1][1] + .24 < total), None) if v9 else None
     blends, v9_cues = [], []
     music = str(Path(options.music).resolve()) if options.music else ""
-    auto_music = v9 if options.auto_music is None else options.auto_music
+    auto_music = not gta and (v9 if options.auto_music is None else options.auto_music)
     if auto_music and not music and audio:
         music = str(music_bed(scratch / "pulso-v9.wav"))
     elapsed = 0.0
     frame_counts = []
     punches = []
+    gta_sounds = []
+    moment = None
+    if gta and options.sfx != "nenhum":
+        from gta_kit import optional_effect
+        from live_edit_style import normalized
+
+        moment = next(((i, at - start) for i, (start, end, _) in enumerate(shots)
+                       for at, _, token in spoken if options.gta_accent and
+                       normalized(token) == options.gta_accent and start <= at < end), None)
     for index, (start, end, style) in enumerate(shots):
         frame_start = round(elapsed * 30)
         elapsed += end - start
@@ -720,7 +763,10 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
             from interview import focus
             focus_x = focus(source, start, end)
             layout_options = replace(options, game="", smart_reframe=False)
-        elif options.smart_reframe and style == "game" and not options.face and not options.game:
+        elif gta and style in {"game", "gamecam", "game_detail"}:
+            from live_edit_style import focus_expression
+            focus_x = focus_expression(gta_focus, start - focus_at)
+        elif options.smart_reframe and not options.live_edit and style == "game" and not options.face and not options.game:
             from creative_studio import shot_focus
             focus_x = shot_focus(source, start, end)
         graph = layout_graph(style, layout_options, focus_x)
@@ -797,7 +843,7 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
         if v9 and style == "face":
             graph += f";{layer}hue=s=1.035,unsharp=5:5:0.25[graded]"
             layer = "[graded]"
-        elif v9 and style in {"game", "gamecam"}:
+        elif v9 and style in {"game", "game_detail", "gamecam"}:
             graph += f";{layer}curves=all='0/0.006 0.2/0.218 0.75/0.76 1/1',format=yuv420p[graded]"
             layer = "[graded]"
         if index == dissolve:
@@ -816,10 +862,32 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
             blends.append({"frame": frame_start, "duration_frames": 5})
         if v9 and options.sfx != "nenhum":
             if index in inserts:
-                v9_cues.append((frame_start / 30 + inserts[index][1], "whoosh" if insert_full else
-                                "impacto" if registered else "radio", -18 if registered else -15))
+                at = frame_start / 30 + inserts[index][1]
+                sound = optional_effect(scratch, "pop") if gta else None
+                if sound:
+                    gta_sounds.append((sound, at, -26))
+                else:
+                    v9_cues.append((at, "whoosh" if insert_full else "impacto" if registered else "radio",
+                                    -18 if registered else -15))
             if index == dissolve:
                 v9_cues.append(((frame_start - 1) / 30, "impacto", -12))
+        if index == gta_cut:
+            graph += (f";{layer}fps=30,drawbox=t=fill:color=0xffebc5@0.13:enable='eq(n,0)',"
+                      "drawbox=t=fill:color=0xffebc5@0.08:enable='eq(n,1)',"
+                      "drawbox=t=fill:color=0xffebc5@0.04:enable='eq(n,2)'[gta_transition]")
+            layer = "[gta_transition]"
+            if options.sfx != "nenhum":
+                sound = optional_effect(scratch, "whoosh")
+                at = max(0., frame_start / 30 - .06)
+                if sound:
+                    gta_sounds.append((sound, at, -20))
+                else:
+                    v9_cues.append((at, "whoosh", -20))
+        if moment is not None and index == moment[0] and (index != gta_cut or moment[1] > .55):
+            if not any(Path(path).stem == "kit-pop" for path, _, _ in gta_sounds):
+                sound = optional_effect(scratch, "pop")
+                if sound:
+                    gta_sounds.append((sound, frame_start / 30 + moment[1], -26))
         if words or hook or options.channel_handle:
             # Keep the channel mark active on the entire shot, including a rounded-up final frame.
             subtitles(scratch / "legend.ass", words, start, end, style, options.look, hook, shots[0][0],
@@ -840,7 +908,7 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
              {"face": "impacto", "gamecam": "radio"}.get(shots[index][2], "whoosh"))
             for index, time in accents.items()] if options.sfx != "nenhum" and not v9 else v9_cues
     jcuts, gains = [], []
-    if audio or music or cues:
+    if audio or music or cues or gta_sounds:
         duration = sum(frame_counts) / 30
         if audio:
             jcuts, gains = program(lambda args: run_render(FF + args), source, shots, frame_counts,
@@ -850,9 +918,10 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
                           "-t", str(duration), "program.wav"], cwd=scratch)
         if cues:
             render_cues(scratch / "cues.wav", duration, cues, options.sfx_peak)
-        if cues or music or options.voice_polish:
+        if cues or music or options.voice_polish or gta_sounds:
             make_mix(FF, run_render, scratch, duration, options.voice_polish, music,
-                     -21 if v9 and options.auto_music is None and not options.music else options.music_db, bool(cues))
+                     -21 if v9 and options.auto_music is None and not options.music else options.music_db,
+                     bool(cues), kit_sounds=gta_sounds)
             join += ["-i", "mix.wav", "-map", "1:a:0"]
             if options.voice_polish:
                 join += ["-af", loudness_filter(FF, scratch), "-ar", "48000"]
@@ -884,6 +953,9 @@ def _render_clip(source, destination, shots, words, options, scratch, hook, timi
             "transition": options.transition, "dissolves": blends, "sound_cues": cues, "compression": compression,
             "video_encoder": video_encoder[1],
             "jcuts": jcuts, "punches": punches, "run_gains_db": gains, "voice_polish": options.voice_polish,
+            **({"gta": {"focus": gta_focus, "webcam_width": 2 * round(width * 171 / (2 * WIDTH)),
+                        "light_pulse_shot": gta_cut + 1 if gta_cut is not None else None,
+                        "kit_sounds": [Path(path).stem for path, _, _ in gta_sounds]}} if gta else {}),
             "music": Path(music).name if music else None}
 
 
@@ -985,7 +1057,10 @@ def _process(source, folder, options, log, screening, staging_dir, on_review, re
                                                    or options.visual_library or screening or options.live_kit_mode != "off"
                                                    or (options.render and options.captions)):
                 log(f"Transcrevendo o trecho de {low:.1f}s a {high:.1f}s.")
-                words = transcribe(source, low, high, language=options.speech_language)
+                try:
+                    words = transcribe(source, low, high, language=options.speech_language)
+                except (OSError, RuntimeError, sp.SubprocessError) as error:
+                    log(f"Transcrição indisponível ({type(error).__name__}). Continuando com imagem e áudio originais.")
             edits = list(transcript_edits(words, cleanup))
             if options.trim_inactive:
                 bins = inspect(source, high-low, audio, options.face, start=low, normalized=False)
@@ -1011,7 +1086,8 @@ def _process(source, folder, options, log, screening, staging_dir, on_review, re
             direction = kit_direction(spoken, force=options.live_kit_mode == "on")
             if direction:
                 rhythm = {"dica": 3.4, "reacao": 2.65, "descoberta": 2.8}.get(direction["kind"], 3.0)
-                clip_options = replace(options, look="gta-kit", target_shot_seconds=rhythm, gta_accent=direction["accent"])
+                clip_options = replace(options, look="gta-kit", live_edit=True, target_shot_seconds=rhythm,
+                                       gta_accent=direction["accent"])
                 log(f"Estilo do kit · {direction['label']}.")
         by_style = {style: [shot for low, high in kept
                             for shot in layouts(range_signals[(low, high)][0], low, high,
@@ -1024,7 +1100,7 @@ def _process(source, folder, options, log, screening, staging_dir, on_review, re
         log(f"Edição: {len(kept)} trecho(s), {len(removals)} remoção(ões).")
         hook = " ".join(options.hook_text.split())[:64]
         if not hook and (options.hook or direction) and kept:
-            hook = opening_phrase(spoken, kept[0][0])
+            hook = (direction or {}).get("hook") or opening_phrase(spoken, kept[0][0])
         creative = {}
         cut_options = clip_options
         if options.effects_model and options.render and spoken:
@@ -1034,10 +1110,20 @@ def _process(source, folder, options, log, screening, staging_dir, on_review, re
             if creative["generated"]:
                 effect = EFFECTS[creative["effect"]]
                 transition = options.transition if options.transition == "v9" else effect
-                cut_options = replace(clip_options, polish=effect != "corte", transition=transition)
-                log(f"Montagem com Ollama: {creative['effect']} · {creative.get('framing', 'enquadramento V9')}.")
+                cut_options = replace(clip_options, polish=clip_options.live_edit or effect != "corte", transition=transition)
+                if clip_options.live_edit and not hook:
+                    title = creative["titles"][0]
+                    hook = title if len(title) <= 48 else ""
+                log(f"Sugestão do Ollama: {creative['effect']} · {creative.get('framing', 'enquadramento V9')}.")
+        if not hook and options.live_edit and kept:
+            hook = opening_phrase(spoken, kept[0][0])
+        if not hook and direction and len(spoken) >= 6:
+            hook = direction["label"]
         if options.style == "dynamic" and (creative.get("framing") or not close_allowed):
             by_style["dynamic"] = direct_shots(by_style["dynamic"], creative.get("framing"), close_allowed)
+        if direction and options.face and options.style == "dynamic":
+            from live_edit_style import gameplay_with_face
+            by_style["dynamic"] = gameplay_with_face(by_style["dynamic"])
         report["clips"].append({
             "parts": [dict(start=a, end=b, score=score(range_signals[(a, b)][0], a, b, range_signals[(a, b)][1]))
                       for a, b in kept],
@@ -1128,7 +1214,8 @@ def _process(source, folder, options, log, screening, staging_dir, on_review, re
                                 raise InterruptedError("Revisão cancelada.")
                             if not approved(verdict):
                                 if verdict.get("technical_ok"):
-                                    verdict["reason"] = ("revisao_ia_indisponivel" if not verdict.get("editorial")
+                                    verdict["reason"] = ("avaliacao_local" if not prior.get("vision_model")
+                                                         else "revisao_ia_indisponivel" if not verdict.get("editorial")
                                                          else "reprovado_apos_ajuste" if action
                                                          else "editorial_sem_recuperacao")
                                 verdict["status"] = ("review_unavailable" if verdict["reason"] == "revisao_ia_indisponivel"
@@ -1163,6 +1250,9 @@ def _process(source, folder, options, log, screening, staging_dir, on_review, re
                         else:
                             log(f"Descartado depois da edição: {verdict['score']}/100 ({verdict['reason']}).")
                         continue
+                    if cut_options.live_edit:
+                        opening = "com abertura" if hook else "sem abertura"
+                        log(f"Edição aplicada: {len(shots)} plano(s) · {opening}.")
                     publish.replace(destination)
                     if on_export:
                         on_export(destination)

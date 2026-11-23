@@ -57,9 +57,9 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
         profile = configure(scout.performance, scout.acceleration)
         workers = min(workers, profile.max_renders)
         if scout.auto_finalize:
-            from ai_setup import MODELS, installed_models, start_model_service
+            from ai_setup import MODELS, installed_models, official_executable, start_model_service
             models = installed_models()
-            if models is None:
+            if models is None and official_executable():
                 log("Ativando o Ollama para a revisão automática.")
                 try:
                     start_model_service()
@@ -71,9 +71,11 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
             if model:
                 log(f"Revisão automática com {model} · até uma correção por corte antes de salvar.")
             else:
-                log("Qwen com visão indisponível no início. A captura pode continuar e guardar trechos para revisão manual.")
-            scout = replace(scout, model=scout.model or model, vision_model=model or scout.vision_model or MODELS[0])
-            options = replace(options, effects_model=options.effects_model or model)
+                log("IA local indisponível. Captura, edição e nota continuam com as regras do V9.")
+            scout = replace(scout, model=scout.model if scout.model in (models or ()) else model, vision_model=model)
+            options = replace(options, effects_model=options.effects_model if options.effects_model in (models or ()) else model)
+        elif not scout.model and not scout.vision_model:
+            log("Montagem e avaliação com as regras locais do V9.")
         from workspace_data import editorial_weights, register_exports
         weights = editorial_weights(output)
         from viral_knowledge import load_history
@@ -126,7 +128,10 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                     model, threshold, prior = screening
                     screening = (model, threshold, dict(prior, auto_finalize=True, stop=stop.is_set,
                                                         protect_edges=settings.keep_manual_edges,
-                                                        reserve_manual_review=reserve_manual_review if live_review else None))
+                                                        reserve_manual_review=reserve_manual_review if live_review else lambda: True))
+                if screening and not (scout.model or scout.vision_model):
+                    model, threshold, prior = screening
+                    screening = (model, threshold, dict(prior, allow_gemini=False))
 
                 def review(candidate, media, verdict, words, hook):
                     clip_id = enqueue(output, candidate, media, verdict,
@@ -215,9 +220,13 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                         except RuntimeError:
                             audio, duration = None, replay_duration(url)
                         if audio:
-                            periods, _, picks = analysis.submit(select, audio, result, duration, None,
-                                                                settings, scout.model, stop.is_set, weights, log,
-                                                                viewer_clips).result()
+                            try:
+                                periods, _, picks = analysis.submit(select, audio, result, duration, None,
+                                                                    settings, scout.model, stop.is_set, weights, log,
+                                                                    viewer_clips).result()
+                            except (OSError, RuntimeError) as error:
+                                log(f"Transcrição do replay indisponível ({type(error).__name__}). Buscando por ação.")
+                                periods, picks = [], []
                         else:
                             periods, picks = [], []
                         if not picks:
@@ -250,7 +259,8 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                                                    precompress=settings.precompress and not profile.low_priority,
                                                    full_hd=max(size) >= 1920, save_review=False, trim_inactive=True)
                             prior = {"vision_model": scout.vision_model, "origin_url": url,
-                                     "origin_offset": download_low, "speech_language": settings.speech_language}
+                                     "origin_offset": download_low, "speech_language": settings.speech_language,
+                                     "raw_score": pick["av_score"], "signals": pick.get("features") or {}}
                             screening = (scout.model, scout.threshold, prior) if scout.review_final else None
                             analysis.submit(render_job, path, result / f"Trecho-{index:02d}", clip_options,
                                             screening).result()
@@ -297,6 +307,7 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
             def schedule_live(path, block, selected=None, *, capture_dir, result, settings, live_url):
                 screening = None
                 priority = 0
+                settings = replace(settings, live_edit=True)
                 if profile.low_priority:
                     settings = replace(settings, precompress=False)
                 if selected:

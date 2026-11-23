@@ -58,7 +58,7 @@ def pick(data):
 
 def start_job(command, data):
     from ai_setup import installed_models, MODELS
-    from jobs_cli import prepare
+    from jobs_cli import ensure_media_path, prepare
 
     request = {name: data[name] for name in ("sources", "output", "seconds", "count", "minutes", "threshold",
                "speech_language", "acceleration", "precompress", "capture_height", "replay_height",
@@ -91,6 +91,7 @@ def start_job(command, data):
         if model and not request.get("effects_model"):
             request["effects_model"] = model
     sources, *_ = prepare(request)
+    ensure_media_path()
     if command == "live":
         from engine import CAPTURE_RESERVE, capture_space
 
@@ -105,9 +106,7 @@ def start_job(command, data):
     result = {"message": "Trabalho adicionado à fila V9.", "id": row["id"]}
     if local_ai:
         result["message"] += (f" IA de montagem e revisão: {model}." if model else
-                              " O motor vai verificar o Ollama antes de iniciar."
-                              if request["auto_finalize"] and request.get("mode", "render") == "render" else
-                              " Ollama sem modelo conectado. Usando montagem e revisão do V9.")
+                              " Sem modelo disponível no momento. O V9 pode continuar com as regras locais.")
     if profile:
         result["profile"] = {key: profile[key] for key in ("preset_sha256", "source_hashes", "reference_shot_seconds")}
     return result

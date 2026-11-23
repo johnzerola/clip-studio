@@ -111,7 +111,7 @@ def evaluate(path, ff, run, expected, words, model, threshold, prior):
     local_score = score
     visual = None
     editorial = None
-    gemini_gameplay = not tokens and model_configured()
+    gemini_gameplay = not tokens and prior.get("allow_gemini", True) and model_configured()
     visual_provider = None
     if vision_model or gemini_gameplay:
         frames = []

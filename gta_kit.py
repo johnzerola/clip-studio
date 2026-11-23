@@ -96,6 +96,28 @@ def info():
             "durations": DURATIONS, "formats": FORMATS, "questions": QUESTIONS}
 
 
+def optional_effect(folder, name):
+    """Stage a short sound from the registered kit, when it is available locally."""
+    if name not in {"whoosh", "pop"}:
+        raise ValueError("Efeito sonoro não reconhecido.")
+    archive = registered_archive()
+    if archive is None:
+        return None
+    try:
+        with ZipFile(archive) as kit:
+            source = kit.getinfo(PREFIX + f"assets/sfx/{name}.wav")
+            if source.file_size > 2 * 1024**2:
+                return None
+            content = kit.read(source)
+        if content[:4] != b"RIFF" or content[8:12] != b"WAVE":
+            return None
+        target = folder / f"kit-{name}.wav"
+        target.write_bytes(content)
+        return target
+    except (BadZipFile, KeyError, OSError, RuntimeError):
+        return None
+
+
 def text_field(data, key, limit):
     value = data.get(key, "")
     if not isinstance(value, str) or len(value) > limit:

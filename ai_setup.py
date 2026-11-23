@@ -26,8 +26,10 @@ def recommended_model():
 
 def official_executable():
     found = shutil.which("ollama.exe")
-    default = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/Ollama/ollama.exe"
-    return found or (str(default) if default.is_file() else None)
+    candidates = [Path(value) / relative for env, relative in
+                  (("LOCALAPPDATA", "Programs/Ollama/ollama.exe"), ("ProgramFiles", "Ollama/ollama.exe"))
+                  if (value := os.environ.get(env))]
+    return found or next((str(path) for path in candidates if path.is_file()), None)
 
 
 def start_model_service():
@@ -66,9 +68,13 @@ def install_model(model, notify):
             raise RuntimeError("Instale o Ollama em https://ollama.com/download.")
         notify("Instalando o Ollama pelo WinGet…")
         location = Path(os.environ["LOCALAPPDATA"]) / "Programs/Ollama"
-        subprocess.run([winget, "install", "--exact", "--id", "Ollama.Ollama", "--source", "winget",
-                        "--location", str(location), "--accept-source-agreements", "--accept-package-agreements"],
-                       check=True, timeout=1800, **runtime.child_options(hide=True))
+        result = subprocess.run([winget, "install", "--exact", "--id", "Ollama.Ollama", "--source", "winget",
+                                 "--scope", "user", "--location", str(location), "--silent",
+                                 "--disable-interactivity", "--accept-source-agreements", "--accept-package-agreements"],
+                                capture_output=True, timeout=1800, **runtime.child_options(hide=True))
+        if result.returncode and not official_executable():
+            raise RuntimeError(f"O WinGet não instalou o Ollama (código {result.returncode}). "
+                               "Instale em https://ollama.com/download/windows ou continue com as regras locais.")
     start_model_service()
     if model in (installed_models() or set()):
         return

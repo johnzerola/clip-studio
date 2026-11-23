@@ -5,8 +5,9 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from engine import subtitles
-from live_edit_style import kit_direction, post_copy
+from engine import Options, layout_graph, layouts, subtitles
+from live_edit_style import focus_expression, gameplay_focus, gameplay_with_face, kit_direction, post_copy
+from jobs_cli import prepare
 from posting_queue import db_open, enqueue
 
 
@@ -15,6 +16,34 @@ def transcript(text):
 
 
 class LiveKitStyleTest(unittest.TestCase):
+    def test_gta_preset_is_available_from_a_link_and_preserves_native_gameplay(self):
+        sources, options, *_, scout = prepare({"style": "gta6", "sources": ["https://kick.com/gabepeixe"]})
+        self.assertEqual(sources[0][1], "live")
+        self.assertEqual(options.style, "dynamic")
+        self.assertEqual(options.live_kit_mode, "on")
+        self.assertFalse(scout.auto_finalize)
+        self.assertEqual(gameplay_with_face([(0, 10, "game")]), [(0, 2., "split"), (2., 10, "gamecam")])
+
+    def test_gameplay_focus_ignores_edge_noise_and_tracks_a_local_change(self):
+        import numpy as np
+        before = np.zeros((54, 96), dtype=np.uint8)
+        after = before.copy()
+        after[15:45, :12] = 255
+        self.assertEqual(gameplay_focus(before.tobytes() + after.tobytes()), [.5, .5])
+        after[24:40, 26:36] = 255
+        points = gameplay_focus(before.tobytes() + after.tobytes())
+        self.assertLess(points[-1], .5)
+        self.assertIn("clip(", focus_expression(points, 0))
+    def test_live_gameplay_uses_a_detail_shot_at_a_spoken_cue(self):
+        options = Options("dynamic", "", "", "direito", True, False, 20, 1, True,
+                          live_edit=True, transition="v9", smart_reframe=True)
+        words = [(8, 8.2, "senha,")]
+        self.assertEqual(layouts([], 0, 20, options, words),
+                         [(0, 8, "game"), (8, 10.1, "game_detail"), (10.1, 20, "game")])
+        self.assertEqual(layouts([], 0, 20, options), [(0, 20, "game")])
+        self.assertNotIn("crop=iw*0.82", layout_graph("game", options))
+        self.assertIn("crop=iw*0.82", layout_graph("game_detail", options))
+
     def test_automatic_detection_and_forced_session(self):
         self.assertIsNone(kit_direction(transcript("Olha isso, GTA cinco!")))
         self.assertEqual(kit_direction(transcript("Como fazer no GTA VI"))["kind"], "dica")

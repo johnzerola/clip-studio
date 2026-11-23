@@ -12,13 +12,13 @@ def download(url, directory, kind, stop, *, window=None, limit=None, max_height=
     from engine import REPLAY_HEIGHTS, capture_space, command
 
     directory.mkdir(parents=True, exist_ok=True)
-    suffix = "mka" if kind == "audio" else "mp4"
+    suffix = "opus" if kind == "audio" else "mp4"
     target = directory / f"{kind}.{suffix}"
     args = [sys.executable, "-m", "yt_dlp", "--ignore-config", "--compat-options", "no-certifi",
             "--no-playlist", "--match-filter", "!is_live & !is_upcoming", "--socket-timeout", "15",
             "--retries", "2", "--concurrent-fragments", "1", "--no-progress"]
     if kind == "audio":
-        args += ["-f", "bestaudio", "--remux-video", "mka"]
+        args += ["-f", "bestaudio/best", "--extract-audio", "--audio-format", "opus"]
     elif kind in ("video", "preview") and window is not None:
         start, end = window
         if not 0 <= start < end <= start + 181:
@@ -35,7 +35,9 @@ def download(url, directory, kind, stop, *, window=None, limit=None, max_height=
     args += ["-o", str(target), "--", url]
     if stop.is_set():
         raise InterruptedError("Download cancelado.")
-    with (directory.parent / "download.log").open("ab") as log:
+    log_path = directory.parent / "download.log"
+    with log_path.open("ab") as log:
+        log_start = log.tell()
         with subprocess.Popen(args, stdout=log, stderr=log, stdin=subprocess.DEVNULL,
                               **runtime.child_options(force_low=True, hide=True)) as child:
             deadline = time.monotonic() + (1800 if window else 21600)
@@ -58,7 +60,11 @@ def download(url, directory, kind, stop, *, window=None, limit=None, max_height=
                     stop.wait(.5)
                 if child.returncode or not target.is_file():
                     detail = "O provedor não entregou uma faixa de áudio separada" if kind == "audio" else "O provedor não entregou o intervalo"
-                    raise RuntimeError(f"{detail}. Consulte {directory.parent / 'download.log'}.")
+                    with log_path.open("rb") as reader:
+                        reader.seek(max(log_start, log_path.stat().st_size - 8192))
+                        lines = reader.read().decode("utf-8", "replace").splitlines()
+                    error = next((line.removeprefix("ERROR: ") for line in reversed(lines) if line.startswith("ERROR: ")), "")
+                    raise RuntimeError(f"{detail}. {error[:320] or 'Consulte download.log.'}")
             finally:
                 if child.poll() is None:
                     if sys.platform == "win32":

@@ -258,8 +258,12 @@ class LiveScout:
                                fast_video=runtime.active.low_priority, log=self.log)
             quiet = runtime.active.quiet_pass and features and all(rms < 100 and motion < 2
                                                                   for rms, motion, _ in features)
-            words = (transcribe(path, 0, seconds, model="tiny", language=self.settings.speech_language)
-                     if audio and not quiet else [])
+            try:
+                words = (transcribe(path, 0, seconds, model="tiny", language=self.settings.speech_language)
+                         if audio and not quiet else [])
+            except (OSError, RuntimeError) as error:
+                words = []
+                self.log(f"Transcrição indisponível ({type(error).__name__}). Triagem por áudio e movimento.")
             if audio and quiet:
                 self.log(f"{path.name}: áudio baixo e imagem estável. Triagem preservou o tempo sem transcrever.")
         previous = self.last_segment

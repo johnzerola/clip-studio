@@ -79,7 +79,7 @@ def program(read, source, shots, frames, path, jcut_ms, level=False):
     return edits, gains
 
 
-def make_mix(ff, run, scratch, duration, voice, music, music_db, cues):
+def make_mix(ff, run, scratch, duration, voice, music, music_db, cues, *, kit_sounds=()):
     inputs = ["-i", "program.wav"]
     graph = [f"[0:a]{VOICE if voice else 'anull'}[voice]"]
     sources = ["[voice]"]
@@ -97,6 +97,14 @@ def make_mix(ff, run, scratch, duration, voice, music, music_db, cues):
         inputs += ["-i", "cues.wav"]
         graph.append(f"[{index}:a]aresample=48000,aformat=channel_layouts=stereo[sfx]")
         sources.append("[sfx]")
+        index += 1
+    for path, at, gain in kit_sounds:
+        label = f"[kit{index}]"
+        inputs += ["-i", str(path)]
+        graph.append(f"[{index}:a]aresample=48000,aformat=channel_layouts=stereo,"
+                     f"volume={gain}dB,adelay={round(at * 1000)}:all=1{label}")
+        sources.append(label)
+        index += 1
     graph.append("".join(sources) +
                  f"amix=inputs={len(sources)}:duration=first:normalize=0,"
                  "alimiter=limit=0.93:level=false:latency=true[mix]")
