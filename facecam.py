@@ -54,3 +54,14 @@ def gameplay_region(face):
     if y > .70:
         return f"0,0,1,{y:.5f}"
     return ""
+
+
+if __name__ == "__main__":
+    import sys
+
+    width, height = map(int, sys.argv[1:3])
+    size = width * height
+    payload = sys.stdin.buffer.read()
+    if len(payload) % size:
+        raise ValueError("Quadros incompletos.")
+    print(estimate([payload[i:i + size] for i in range(0, len(payload), size)], width, height))

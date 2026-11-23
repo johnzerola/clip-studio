@@ -79,7 +79,8 @@ def start_job(command, data):
         request["director_project"] = str(Path(data["project"]).resolve())
     if command == "live":
         request.update(review=True, replay_after_live=bool(data.get("replay_after_live", True)))
-        request["gta_kit_style"] = data.get("gta_kit_style") is True
+        request["live_kit_mode"] = data.get("live_kit_mode",
+                                           "on" if data.get("gta_kit_style") is True else "auto")
     local_ai = request.get("review") and data.get("ollama_review", True) is True
     request["auto_finalize"] = bool(local_ai and command in ("render", "live") and not request.get("ranges"))
     model = ""
@@ -257,6 +258,10 @@ def desktop_job(row):
             detail = "Nenhum clipe · captura pausada por espaço em disco"
         elif any(line.startswith("Nenhum vídeo ao vivo") for line in messages):
             detail = "Nenhum clipe · o provedor não entregou vídeo ao vivo"
+        elif any("revisão visual do Qwen indisponível" in line for line in messages):
+            detail = "Nenhum clipe · revisão visual indisponível em parte da sessão"
+        elif any("descartado depois da edição" in line.casefold() for line in messages):
+            detail = "Nenhum clipe · candidatos editados ficaram abaixo dos critérios de salvamento"
         elif any("descartado" in line.casefold() for line in messages):
             detail = "Nenhum clipe aprovado pela triagem"
     return {"id": row["id"], "state": row["state"], "detail": detail, "cancel": bool(row["cancel"]),
@@ -420,9 +425,14 @@ def action(command, data):
         if command == "review":
             review = review_info(folder, row["id"])
             judgement = review.get("visual") or review.get("semantic") or {}
-            return {"notes": review.get("reason", row["reason"]), "engine": review.get("review_engine"),
+            notes = review.get("reason", row["reason"])
+            if review.get("manual_review") and review.get("original_review_score") != review.get("local_score"):
+                notes = (f"Nota local {review['local_score']}/100 · "
+                         f"Revisão anterior {review['original_review_score']}/100 · {notes}")
+            return {"notes": notes, "engine": review.get("review_engine"),
                     "source_size": review.get("source_size"), "output_size": review.get("output_size"),
                     "edit_model": review.get("edit_model"), "editorial_reason": judgement.get("reason"),
+                    "live_kit_label": (review.get("live_kit") or {}).get("label"),
                     "knowledge": judgement.get("knowledge", []), "editorial": review.get("editorial"),
                     "attempts": review.get("attempts", []),
                     "transcript": str(review.get("studio_transcript") or "")[:12000],

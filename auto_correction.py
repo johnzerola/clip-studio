@@ -15,6 +15,13 @@ def approved(verdict):
             and verdict.get("recommendation") == "recommended")
 
 
+def manual_review_score(verdict):
+    if not verdict.get("technical_ok") or approved(verdict):
+        return None
+    score = max(verdict["score"], verdict.get("local_score", 0))
+    return score if score >= 65 else None
+
+
 def attempt_data(verdict):
     editorial = verdict.get("editorial") or {}
     return {"score": verdict["score"], "recommendation": verdict.get("recommendation", "pending"),
@@ -28,14 +35,16 @@ def correction(source, total, audio, shots, words, options, verdict, *, protect_
     if not verdict.get("technical_ok") or not review:
         return None
     action = review.get("adjustment")
-    if action in (None, "nenhum"):
-        return None
     blocker = review.get("blocker")
+    if action in (None, "nenhum"):
+        action = FALLBACK.get(blocker)
+        if action not in ("contexto", "desfecho"):
+            return None
     if blocker in FALLBACK and FALLBACK[blocker] != action:
         return None
     if action in ("contexto", "desfecho") and not protect_edges:
         start, end = shots[0][0], shots[-1][1]
-        low, high = (max(0., start - 5.), start) if action == "contexto" else (end, min(total, end + 5.))
+        low, high = (max(0., start - 8.), start) if action == "contexto" else (end, min(total, end + 5.))
         if high - low >= 1.2:
             added = transcribe(source, low, high, language=options.speech_language) if audio else []
             # Prefer a phrase edge before/after the original edit. Keep the original action intact.

@@ -19,6 +19,7 @@ from engine import capture, process, probe
 from posting_queue import enqueue
 from replay_library import Replay, archive_url, claim, finish, list_replays
 from live_scout import LiveScout, ScoutSettings
+from live_render_queue import LiveRenderQueue
 from runtime_profile import configure, lower_worker_priority
 
 
@@ -60,15 +61,19 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
             models = installed_models()
             if models is None:
                 log("Ativando o Ollama para a revisão automática.")
-                start_model_service()
+                try:
+                    start_model_service()
+                except (RuntimeError, OSError) as error:
+                    log(f"Ollama indisponível no início: {error}")
                 models = installed_models()
             names = (scout.vision_model, *MODELS)
             model = next((name for name in names if name and name in (models or ())), "")
-            if not model:
-                raise RuntimeError("A revisão automática precisa de Qwen com visão. Confira o modelo em Integrações.")
-            scout = replace(scout, model=scout.model or model, vision_model=model)
+            if model:
+                log(f"Revisão automática com {model} · até uma correção por corte antes de salvar.")
+            else:
+                log("Qwen com visão indisponível no início. A captura pode continuar e guardar trechos para revisão manual.")
+            scout = replace(scout, model=scout.model or model, vision_model=model or scout.vision_model or MODELS[0])
             options = replace(options, effects_model=options.effects_model or model)
-            log(f"Revisão automática com {model} · até uma correção por corte antes de salvar.")
         from workspace_data import editorial_weights, register_exports
         weights = editorial_weights(output)
         from viral_knowledge import load_history
@@ -83,9 +88,13 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
         with (ThreadPoolExecutor(max_workers=1) as sending, ThreadPoolExecutor(max_workers=workers) as analysis,
               ThreadPoolExecutor(max_workers=8) as lives, ThreadPoolExecutor(max_workers=2) as downloads,
               ThreadPoolExecutor(max_workers=8) as archives):
-            capacity = threading.BoundedSemaphore(max(3, workers * 3))
+            live_queue = LiveRenderQueue(analysis, workers)
             archive_slots = threading.BoundedSemaphore(1)
             upload_slots = threading.BoundedSemaphore(2)
+            manual_review_slots = threading.BoundedSemaphore(3)
+
+            def reserve_manual_review():
+                return manual_review_slots.acquire(blocking=False)
 
             def send_approved(clip_id):
                 from studio_services import auto_publish
@@ -110,13 +119,14 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                     suffix = f" · editando {edits[source]}" if edits[source] else ""
                     activity(source, states.get(source, "Preparando") + suffix)
 
-            def render_job(path, folder, settings, release_source, screening, live_review=False, recording=False):
+            def render_job(path, folder, settings, screening, live_review=False, recording=False):
                 lower_worker_priority()
                 log(f"Edição iniciada: {path.name}.")
                 if screening and scout.auto_finalize:
                     model, threshold, prior = screening
                     screening = (model, threshold, dict(prior, auto_finalize=True, stop=stop.is_set,
-                                                        protect_edges=settings.keep_manual_edges))
+                                                        protect_edges=settings.keep_manual_edges,
+                                                        reserve_manual_review=reserve_manual_review if live_review else None))
 
                 def review(candidate, media, verdict, words, hook):
                     clip_id = enqueue(output, candidate, media, verdict,
@@ -138,40 +148,51 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                     variants = [(style, variant["screening"]) for clip in report["clips"]
                                 for style, variant in clip["variants"].items() if "screening" in variant]
                     record_final(path.parent / "triagem.sqlite3", path.stem, variants)
-                if release_source and report and (screening is not None or any(folder.glob("clip_*.mp4"))):
-                    path.unlink(missing_ok=True)
-                    path.with_suffix(".json").unlink(missing_ok=True)
-                    (folder / "midia-revisao.mp4").unlink(missing_ok=True)
-
             def schedule(path, folder, settings, bounded=False, managed=False, screening=None, live_review=False,
-                         recording=False, live_url=None):
+                         recording=False, live_url=None, priority=0):
                 release_source = managed and settings.render and scout.clean
-                if bounded and not capacity.acquire(blocking=False):
+
+                def cleanup():
                     if release_source:
-                        path.unlink(missing_ok=True)
-                        path.with_suffix(".json").unlink(missing_ok=True)
-                        log("Fila de render cheia. Candidato descartado; decisão disponível na triagem.")
-                    else:
-                        log(f"Fila de render cheia. Candidato guardado em {path.parent}.")
-                    return False
-                log(f"{'Fila de edição' if settings.render else 'Fila de análise'}: {path.name}.")
+                        for temporary in (path, path.with_suffix(".json"), folder / "midia-revisao.mp4"):
+                            try:
+                                temporary.unlink(missing_ok=True)
+                            except OSError as error:
+                                log(f"Limpeza de {temporary.name}: {error}")
+
+                def discard(reason):
+                    cleanup()
+                    message = {"prioridade_da_fila": "candidatos mais fortes na fila",
+                               "limite_temporarios": "limite de arquivos temporários",
+                               "espaco_insuficiente": "espaço em disco insuficiente",
+                               "sessao_cancelada": "sessão cancelada"}[reason]
+                    log(f"Candidato sem exportação: {path.name} · {message}.")
+                    if live_review:
+                        safely(record_final, path.parent / "triagem.sqlite3", path.stem,
+                               [("fila", {"score": priority, "status": "skipped", "reason": reason})])
+
                 def run_render():
+                    if bounded and stop.is_set():
+                        discard("sessao_cancelada")
+                        return
                     activity_update(live_url, change=1)
                     try:
                         safely(render_job, path, folder, replace(settings, save_review=False) if release_source else settings,
-                               False, screening, live_review, recording)
+                               screening, live_review, recording)
                     finally:
-                        if release_source:
-                            for temporary in (path, path.with_suffix(".json"), folder / "midia-revisao.mp4"):
-                                try:
-                                    temporary.unlink(missing_ok=True)
-                                except OSError as error:
-                                    log(f"Limpeza de {temporary.name}: {error}")
+                        cleanup()
                         activity_update(live_url, change=-1)
 
-                job = analysis.submit(run_render)
                 if bounded:
-                    job.add_done_callback(lambda _: capacity.release())
+                    from engine import CAPTURE_RESERVE
+                    if shutil.disk_usage(output).free < CAPTURE_RESERVE + 128 * 1024**2:
+                        discard("espaco_insuficiente")
+                        return False
+                    if not live_queue.offer(priority, path.stat().st_size, lambda: safely(run_render), discard):
+                        return False
+                else:
+                    analysis.submit(run_render)
+                log(f"{'Fila de edição' if settings.render else 'Fila de análise'}: {path.name}.")
                 return folder
 
             def vod(url, folder, result, settings):
@@ -231,7 +252,7 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                             prior = {"vision_model": scout.vision_model, "origin_url": url,
                                      "origin_offset": download_low, "speech_language": settings.speech_language}
                             screening = (scout.model, scout.threshold, prior) if scout.review_final else None
-                            analysis.submit(render_job, path, result / f"Trecho-{index:02d}", clip_options, False,
+                            analysis.submit(render_job, path, result / f"Trecho-{index:02d}", clip_options,
                                             screening).result()
                     return True
                 except InterruptedError:
@@ -275,21 +296,23 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
 
             def schedule_live(path, block, selected=None, *, capture_dir, result, settings, live_url):
                 screening = None
+                priority = 0
                 if profile.low_priority:
                     settings = replace(settings, precompress=False)
                 if selected:
-                    end = min(selected[1], probe(path)[0])
+                    end = min(selected[1], probe(path, timeout=15)[0])
                     settings = replace(settings, manual=((min(selected[0], max(0., end - 1)), end),),
                                        trim_inactive=scout.trim_inactive)
+                    prior = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
+                    priority = int(prior["score"])
                     if scout.review_final and settings.render:
-                        prior = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
                         screening = (scout.model, scout.threshold, dict(prior, vision_model=scout.vision_model))
                         settings = replace(settings, save_review=False)
                 elif scout.review_final and settings.render:
                     screening = (scout.model, scout.threshold, {"vision_model": scout.vision_model})
                 return schedule(path, result / block.relative_to(capture_dir), settings,
                                 bounded=scout.enabled, managed=scout.enabled, screening=screening, live_review=screening is not None,
-                                live_url=live_url)
+                                live_url=live_url, priority=priority)
 
             def monitor(url, folder, callback, replay_result, options):
                 def state(value):
@@ -393,6 +416,7 @@ def run_session(sources, options, minutes, workers, output, wait_minutes, stop, 
                         futures.append(lives.submit(safely, monitor, source, folder, callback, result, settings))
             for future in futures:
                 future.result()
+            live_queue.wait()
         clips = sum(1 for _ in (batch / "Clipes prontos").rglob("clip_*.mp4"))
         if errors.empty():
             if options.review_visuals:

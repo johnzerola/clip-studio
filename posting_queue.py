@@ -160,7 +160,14 @@ def enqueue(folder, candidate, media, verdict, transcript, hook, model):
             source = hashlib.sha256(identity.encode()).hexdigest()
         except OSError:
             pass
-    prepared = copy_from_model(model, transcript, hook) if media and not previous else {}
+    direction = verdict.get("live_kit")
+    prepared = {}
+    if media and not previous:
+        if direction:
+            from live_edit_style import post_copy
+            prepared = post_copy(direction, transcript, hook)
+        else:
+            prepared = copy_from_model(model, transcript, hook)
     title = (prepared.get("title") or hook or " ".join(transcript.split()[:9]) or "Corte da live").strip()
     description = (prepared.get("description") or " ".join(transcript.split()[:27]) or "Trecho da transmissão.").strip()
     description = description[:450]
@@ -169,10 +176,10 @@ def enqueue(folder, candidate, media, verdict, transcript, hook, model):
                    for item in verdict.get("visual_credits", []) if item.get("attribution")]
         if credits:
             description += "\n\nCréditos visuais\n" + "\n".join(credits)
-    trends = topic_matches(folder, transcript) if media and not previous else []
+    trends = topic_matches(folder, transcript) if media and not previous and not direction else []
     common = [word for word in dict.fromkeys(tokens(hook + " " + transcript)) if len(word) >= 4 and word not in STOPWORDS]
-    tags = list(dict.fromkeys([*(match["tag"] for match in trends),
-                               *(hashtag(t) for t in ("CortesDaLive", *common[:4]))]))[:6]
+    tags = prepared.get("tags") or list(dict.fromkeys([*(match["tag"] for match in trends),
+                                                      *(hashtag(t) for t in ("CortesDaLive", *common[:4]))]))[:6]
     with closing(db_open(folder)) as db, db:
         db.execute("""INSERT OR IGNORE INTO clips (id,path,score,result,reason,title,description,tags,trends)
                       VALUES (?,?,?,?,?,?,?,?,?)""", (key, str(media.resolve()) if media else None, verdict["score"],
@@ -183,7 +190,8 @@ def enqueue(folder, candidate, media, verdict, transcript, hook, model):
                                      ("reason","review_path","narrative_rules","action_rules","model",
                                       "semantic","visual","vision_model","speech_seconds","final_motion","threshold","studio_transcript",
                                       "review_engine","transcript_source","origin_url","ranges","visual_credits",
-                                      "source_size","output_size","edit_model","editorial","recommendation","attempts") if field in verdict},
+                                      "source_size","output_size","edit_model","editorial","recommendation","attempts",
+                                      "local_score","manual_review","original_review_score","live_kit") if field in verdict},
                                     ensure_ascii=False)))
         if media:
             register_similarity(db, key, words, duration, visual, source, verdict.get("ranges", ()))

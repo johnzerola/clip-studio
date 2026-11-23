@@ -253,8 +253,9 @@ class LiveScout:
                 while self.entries:
                     self.release(self.entries.popleft()[0])
         with INFERENCE[runtime.active.low_priority]:
-            seconds, audio = probe(path)
-            features = inspect(path, seconds, audio, normalized=False)
+            seconds, audio = probe(path, timeout=15)
+            features = inspect(path, seconds, audio, normalized=False, timeout=max(25, seconds * 2),
+                               fast_video=runtime.active.low_priority, log=self.log)
             quiet = runtime.active.quiet_pass and features and all(rms < 100 and motion < 2
                                                                   for rms, motion, _ in features)
             words = (transcribe(path, 0, seconds, model="tiny", language=self.settings.speech_language)
@@ -359,7 +360,7 @@ class LiveScout:
         try:
             listing.write_text("".join(f"file '{item[0].name}'\n" for item in window), encoding="ascii")
             command(FF + ["-y", "-f", "concat", "-safe", "1", "-i", str(listing), "-map", "0:v:0",
-                          "-map", "0:a:0?", "-c", "copy", "-movflags", "+faststart", str(partial)])
+                          "-map", "0:a:0?", "-c", "copy", "-movflags", "+faststart", str(partial)], timeout=30)
             partial.replace(target)
             manifest.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
             enqueued = self.schedule(target, target.with_suffix(""), tuple(result["selected_range"]))

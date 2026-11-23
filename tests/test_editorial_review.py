@@ -19,7 +19,7 @@ class EditorialReviewTests(unittest.TestCase):
         values = dict.fromkeys(DIMENSIONS, 4)
         values.update(obstaculo="nenhum", motivo="A jogada termina com a vitória visível.")
         with patch("editorial_review.editorial_json", return_value=values) as send:
-            self.assertIsNone(review("modelo", words, {}, frames[:3], 60))
+            self.assertIsNone(review("modelo", words, {}, frames[:2], 60))
             self.assertEqual(review("modelo", words, {}, frames, 60)["recommendation"], "recommended")
         call = send.call_args.args
         self.assertEqual(call[2]["transcricao"], transcript_cues(words))

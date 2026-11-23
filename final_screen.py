@@ -12,6 +12,18 @@ from editorial_review import review
 import runtime_profile as runtime
 
 
+def edited_words(words, shots):
+    """Move original word timestamps to the exported clip's timeline."""
+    result = []
+    cursor = 0.
+    for start, end, _ in shots:
+        for low, high, word in words:
+            if start <= (low + high) / 2 < end:
+                result.append((cursor + max(low, start) - start, cursor + min(high, end) - start, word))
+        cursor += end - start
+    return result
+
+
 def evaluate(path, ff, run, expected, words, model, threshold, prior):
     from engine import SIGNAL_FILTER, inspect
 
@@ -50,7 +62,8 @@ def evaluate(path, ff, run, expected, words, model, threshold, prior):
 
     has_audio = any(s["codec_type"] == "audio" for s in info["streams"])
     transcript_source = "timeline"
-    if (model or vision_model) and has_audio:
+    reuse = prior.get("reuse_transcript") and len(words) >= 6 and prior.get("correction") != "fala"
+    if (model or vision_model) and has_audio and not reuse:
         from engine import speech_model_path, transcribe
         try:
             model_asr = "base" if prior.get("correction") == "fala" and speech_model_path("base", download=False) else None
@@ -95,23 +108,25 @@ def evaluate(path, ff, run, expected, words, model, threshold, prior):
                     if motion >= 2.6 and (median_motion >= 1.12 or signals.get("reaction")) else 0.)
     best = "ação" if action_score > story_score else "narrativa"
     score = min(100, max(0, round(max(story_score, action_score))))
+    local_score = score
     visual = None
     editorial = None
     gemini_gameplay = not tokens and model_configured()
     visual_provider = None
     if vision_model or gemini_gameplay:
         frames = []
-        try:
-            for at in (min(1.25, duration * .06), duration * .28, duration * .58, duration * .91):
+        for at in (min(1.25, duration * .06), duration * .28, duration * .58, duration * .91):
+            try:
                 jpg = run([*ff, "-ss", str(at), "-threads", "1", "-i", str(path),
                            "-frames:v", "1", "-an", "-vf", "scale=288:512", "-c:v", "mjpeg",
                            "-threads", "1", "-f", "image2pipe", "pipe:1"], timeout=8)
                 if jpg:
                     frames.append((round(at, 2), base64.b64encode(jpg).decode("ascii")))
-        except (OSError, RuntimeError, subprocess.SubprocessError):
-            frames = []
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                continue
         if frames:
-            editorial = review(vision_model, words, features, frames, threshold)
+            editorial = review(vision_model, words, features, frames, threshold, retry=bool(prior.get("auto_finalize")),
+                               stop=prior.get("stop"), log=prior.get("log"))
             if editorial:
                 visual = editorial
                 score = editorial["score"]
@@ -121,13 +136,13 @@ def evaluate(path, ff, run, expected, words, model, threshold, prior):
                 if visual:
                     visual_provider = "gemini_visual"
                     score = round(.70 * score + .30 * visual["score"])
-        if not visual and tokens and model and model == vision_model:
+        if not visual and tokens and model and model == vision_model and not prior.get("auto_finalize"):
             semantic = judge_local(model, transcript, features)
             if semantic:
                 score = round(.75 * score + .25 * semantic["score"])
 
     return {"status": "ready" if score >= threshold else "rejected", "technical_ok": True,
-            "threshold": threshold, "score": score, "narrative_rules": round(narrative),
+            "threshold": threshold, "score": score, "local_score": local_score, "narrative_rules": round(narrative),
             "action_rules": round(action), "review_path": best, "story_score": round(story_score),
             "action_score": round(action_score), "speech_seconds": round(speech_seconds, 2),
             "final_motion": round(final_motion, 3), "final_audio_peak_ratio": round(max(audio_peaks, default=0), 3),

@@ -1,5 +1,6 @@
 """Local clip score history with optional observed retention."""
 import argparse
+from contextlib import closing
 import json
 import sqlite3
 from pathlib import Path
@@ -23,13 +24,16 @@ FINAL = """CREATE TABLE IF NOT EXISTS final_reviews (
 
 
 def record_final(database, key, variants):
-    with sqlite3.connect(database) as db:
+    with closing(sqlite3.connect(database)) as db, db:
         db.execute(FINAL)
         db.executemany("""INSERT INTO final_reviews VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(id, variant) DO UPDATE SET score=excluded.score, status=excluded.status,
             detail=excluded.detail""",
             [(key, style, review["score"], review["status"], json.dumps(review, ensure_ascii=False))
              for style, review in variants])
+        if any(style == "fila" and review["status"] == "skipped" for style, review in variants):
+            db.execute(SCHEMA)
+            db.execute("UPDATE decisions SET output=NULL WHERE id=?", (key,))
 
 
 def calibration(db):
@@ -40,18 +44,21 @@ def calibration(db):
         SUM(CASE WHEN f.label='bom' THEN 1 ELSE 0 END) AS good,
         COUNT(d.retention) AS retention_samples, ROUND(AVG(d.retention), 1) AS avg_retention
         FROM decisions d LEFT JOIN feedback f USING(id)
-        LEFT JOIN (SELECT id, MAX(score) AS final_score FROM final_reviews GROUP BY id) r USING(id)
+        LEFT JOIN (SELECT id, MAX(score) AS final_score FROM final_reviews WHERE variant <> 'fila' GROUP BY id) r USING(id)
         GROUP BY score_floor ORDER BY score_floor""")
     return [dict(row) for row in buckets]
 
 
 def record(database, key, decision, output=None):
-    with sqlite3.connect(database) as db:
+    with closing(sqlite3.connect(database)) as db, db:
         db.execute(SCHEMA)
+        db.execute(FINAL)
         db.execute("""INSERT INTO decisions(id,raw_score,score,chat_messages,model,accepted,output)
-                      VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET output=excluded.output""",
+                      VALUES(?,?,?,?,?,?,CASE WHEN EXISTS(
+                          SELECT 1 FROM final_reviews WHERE id=? AND variant='fila' AND status='skipped'
+                      ) THEN NULL ELSE ? END) ON CONFLICT(id) DO UPDATE SET output=excluded.output""",
                    (key, decision["raw_score"], decision["score"], decision["chat_messages"],
-                    decision["model"], decision["accepted"], output))
+                    decision["model"], decision["accepted"], key, output))
 
 
 def main():

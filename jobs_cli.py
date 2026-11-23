@@ -51,8 +51,10 @@ def prepare(request):
     if capture_height is not None and capture_height not in CAPTURE_HEIGHTS:
         raise ValueError("Escolha captura em 480p, 720p, 1080p, 1440p ou 2160p.")
     modelar_reference = request.get("modelar_reference") or {}
-    gta_style = request.get("gta_kit_style") is True
-    target_shot_seconds = float(modelar_reference.get("reference_shot_seconds", 2.8 if gta_style else 3.0))
+    kit_mode = request.get("live_kit_mode", "on" if request.get("gta_kit_style") is True else "off")
+    if kit_mode not in ("auto", "on", "off"):
+        raise ValueError("Escolha o estilo de gameplay automático, sempre ou desligado.")
+    target_shot_seconds = float(modelar_reference.get("reference_shot_seconds", 3.0))
     poll_hours = int(request.get("live_poll_hours", 1))
     if poll_hours not in (0, 1, 2, 3):
         raise ValueError("Escolha uma frequência de 0, 1, 2 ou 3 horas.")
@@ -86,7 +88,7 @@ def prepare(request):
     library, background, backdrop = configured_visuals(ROOT, request)
     opts = Options(style, "", "", "direito", bool(request.get("captions", True)), False, duration, count,
                    mode != "plan", manual=manual, cleanup=Cleanup(True, True, True, True, 1.2, -40),
-                   auto_face=True, look="gta-kit" if gta_style else "shorts", polish=True, voice_polish=True, jcut_ms=130,
+                   auto_face=True, look="shorts", live_kit_mode=kit_mode, polish=True, voice_polish=True, jcut_ms=130,
                    transition="v9", compression="compacto", auto_music=bool(request.get("music", True)),
                    contextual_broll=False, keep_manual_edges=bool(manual), channel_handle=request.get("channel_handle") or "",
                    hook_text=request.get("hook_text") or "", effects_model=request.get("effects_model") or "",
@@ -165,7 +167,7 @@ def main():
     create.add_argument("--capture-height", type=int, choices=CAPTURE_HEIGHTS)
     create.add_argument("--replay-after-live", action="store_true")
     create.add_argument("--auto-finalize", action="store_true",
-                        help="Revisar, tentar um ajuste quando possível e salvar só cortes aprovados pela IA.")
+                        help="Revisar com IA, tentar um ajuste e preservar até três candidatos da live para revisão manual.")
     create.add_argument("--replay-height", type=int, choices=REPLAY_HEIGHTS, default=1440)
     create.add_argument("--live-poll-hours", choices=(0,1,2,3), default=1, type=int)
     create.add_argument("--transcribe-recordings", action="store_true")

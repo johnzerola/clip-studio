@@ -7,13 +7,13 @@ import subprocess
 import threading
 import time
 import runtime_profile as runtime
-from ollama_connection import CACHE_SERVICE, DEFAULT, active_endpoint, service_models
+from ollama_connection import CACHE_SERVICE, DEFAULT, active_endpoint, forget_endpoint, service_models
 
 MODELS = ("qwen3.5:4b", "qwen3.5:2b")
 
 
 def installed_models():
-    ordinary, cached = service_models(DEFAULT), service_models(CACHE_SERVICE)
+    cached, ordinary = service_models(CACHE_SERVICE), service_models(DEFAULT)
     if ordinary is None and cached is None:
         return None
     return (ordinary or set()) | (cached or set())
@@ -50,7 +50,7 @@ def start_model_service():
     subprocess.Popen([executable, "serve"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                      stderr=subprocess.DEVNULL, env=env, **runtime.child_options(hide=True))
     for _ in range(25):
-        if service_models(endpoint) is not None:
+        if service_models(endpoint, refresh=True) is not None:
             return
         time.sleep(1)
     raise RuntimeError("O Ollama não respondeu. Abra o Ollama e volte a verificar.")
@@ -76,8 +76,10 @@ def install_model(model, notify):
     if executable is None or installed_models() is None:
         raise RuntimeError("Abra o Ollama e volte a verificar a conexão.")
     notify(f"Baixando {model}. O tempo depende da conexão…")
-    pull_env = dict(os.environ, OLLAMA_HOST=active_endpoint().removeprefix("http://"))
+    endpoint = active_endpoint()
+    pull_env = dict(os.environ, OLLAMA_HOST=endpoint.removeprefix("http://"))
     subprocess.run([executable, "pull", model], env=pull_env, check=True, timeout=7200, **runtime.child_options(hide=True))
+    forget_endpoint(endpoint)
     if model not in (installed_models() or set()):
         raise RuntimeError("O modelo não apareceu na lista do Ollama.")
 

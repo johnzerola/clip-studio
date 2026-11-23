@@ -8,7 +8,7 @@ import urllib.request
 from runtime_profile import ollama_resources
 import runtime_profile as runtime
 from viral_knowledge import retrieve
-from ollama_connection import active_endpoint
+from ollama_connection import active_endpoint, forget_endpoint
 
 OLLAMA = threading.Lock()
 _retry_after = {}
@@ -102,15 +102,19 @@ def rank_chat(picks, duration, arrival, measure=None):
     return sorted(picks, key=lambda row: row["av_score"] + row["chat"][3], reverse=True)
 
 
-def editorial_json(model, instructions, evidence, fields, images=(), *, context=2048, max_tokens=80):
+def editorial_json(model, instructions, evidence, fields, images=(), *, context=2048, max_tokens=80, final_review=False):
     lane = "visual" if images else "text"
-    if not model or time.monotonic() < _retry_after.get(lane, 0.) or not OLLAMA.acquire(blocking=False):
+    if not model or (not final_review and time.monotonic() < _retry_after.get(lane, 0.)):
+        return None
+    acquired = OLLAMA.acquire(timeout=8) if final_review else OLLAMA.acquire(blocking=False)
+    if not acquired:
         return None
     schema = {"type": "object", "properties": fields, "required": list(fields), "additionalProperties": False}
     keep_alive, threads = ollama_resources()
     options = {"num_predict": max_tokens, "num_ctx": context, "temperature": 0, "num_thread": threads}
     if runtime.acceleration == "cpu":
         options["num_gpu"] = 0
+    endpoint = None
     try:
         body = json.dumps({
             "model": model, "stream": False, "think": False, "keep_alive": keep_alive,
@@ -120,16 +124,22 @@ def editorial_json(model, instructions, evidence, fields, images=(), *, context=
                 {"role": "user", "content": json.dumps(evidence, ensure_ascii=False),
                  **({"images": list(images)} if images else {})}
             ]}).encode("utf-8")
-        request = urllib.request.Request(active_endpoint(model) + "/api/chat", body,
+        endpoint = active_endpoint(model)
+        request = urllib.request.Request(endpoint + "/api/chat", body,
                                          {"Content-Type": "application/json"})
-        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
-                request, timeout=210 if images and context > 2048 else 50) as response:
+        timeout = 75 if final_review else 210 if images and context > 2048 else 50
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=timeout) as response:
             result = json.loads(json.load(response)["message"]["content"])
+        _retry_after.pop(lane, None)
         return result if isinstance(result, dict) else None
     except TimeoutError:
         _retry_after[lane] = time.monotonic() + 180
         return None
-    except (ValueError, OSError, KeyError, TypeError):
+    except OSError:
+        if endpoint:
+            forget_endpoint(endpoint)
+        return None
+    except (ValueError, KeyError, TypeError):
         return None
     finally:
         OLLAMA.release()
